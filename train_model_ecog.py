@@ -448,7 +448,7 @@ def prep_orion(args, hyperparams):
 #-------------------------------------------------------------------
 
 def generate_save_loc(args, hyperparams, orion_hp_string):
-    data_name = args.data_path.split('/')[-1]
+    data_name = args.data_path.split(os.path.sep)[-1]
     model_name = hyperparams['model_name']
     if args.data_suffix == 'ospikes':
         model_name += '_oasis'
@@ -463,7 +463,7 @@ def generate_save_loc(args, hyperparams, orion_hp_string):
 #-------------------------------------------------------------------
     
 def save_figs(save_loc, model, dl, plotter):
-    fig_folder = save_loc + 'figs/'
+    fig_folder = save_loc + 'figs' + os.path.sep
     
     if os.path.exists(fig_folder):
         os.system('rm -rf %s'%fig_folder)
