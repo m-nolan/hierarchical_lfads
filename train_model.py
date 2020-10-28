@@ -63,7 +63,7 @@ def main():
         os.makedirs(save_loc)
         
     data_dict   = read_data(args.data_path)
-    
+
     train_dl, valid_dl, plotter, model, objective = prep_model(model_name  = args.model,
                                                                data_dict   = data_dict,
                                                                data_suffix = args.data_suffix,

@@ -7,6 +7,7 @@ import torch
 import torchvision
 import torch.optim as opt
 import torchvision.transforms as trf
+from torch.utils.data.dataset import Dataset
 import pickle
 
 from orion.client import report_results
@@ -114,6 +115,15 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       dtype=train_dl.dataset.tensors[0].dtype,
                                       dt= data_dict['dt']
                                       )
+
+    if model_name == 'lfads_ecog':
+        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
+        model, objective = prep_lfads_ecog(input_dims = input_dims,
+                                      hyperparams=hyperparams,
+                                      device= device,
+                                      dtype=train_dl.dataset.tensors[0].dtype,
+                                      dt= data_dict['dt']
+                                      )
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -173,6 +183,38 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
                                     device               = device).to(device)
     
     loglikelihood = LogLikelihoodPoisson(dt=float(dt))
+
+    objective = LFADS_Loss(loglikelihood            = loglikelihood,
+                           loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
+                                                       'l2': hyperparams['objective']['l2']},
+                           l2_con_scale             = hyperparams['objective']['l2_con_scale'],
+                           l2_gen_scale             = hyperparams['objective']['l2_gen_scale']).to(device)
+
+    return model, objective
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt):
+    from objective import LFADS_Loss, LogLikelihoodGaussian
+    from lfads import LFADS_Ecog_SingleSession_Net
+
+    model = LFADS_Ecog_SingleSession_Net(input_size           = input_dims,
+                                    factor_size          = hyperparams['model']['factor_size'],
+                                    g_encoder_size       = hyperparams['model']['g_encoder_size'],
+                                    c_encoder_size       = hyperparams['model']['c_encoder_size'],
+                                    g_latent_size        = hyperparams['model']['g_latent_size'],
+                                    u_latent_size        = hyperparams['model']['u_latent_size'],
+                                    controller_size      = hyperparams['model']['controller_size'],
+                                    generator_size       = hyperparams['model']['generator_size'],
+                                    prior                = hyperparams['model']['prior'],
+                                    clip_val             = hyperparams['model']['clip_val'],
+                                    dropout              = hyperparams['model']['dropout'],
+                                    do_normalize_factors = hyperparams['model']['normalize_factors'],
+                                    max_norm             = hyperparams['model']['max_norm'],
+                                    device               = device).to(device)
+    
+    loglikelihood = LogLikelihoodGaussian()
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
@@ -271,18 +313,40 @@ def prep_svlae(input_dims, hyperparams, device, dtype, dt):
     
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
+# move this later
+class EcogTensorDataset(Dataset):
+    r"""Dataset wrapping tensors.
+
+    Each sample will be retrieved by indexing tensors along the first dimension.
+
+    Arguments:
+        *tensors (Tensor): tensors that have the same size of the first dimension.
+    """
+
+    def __init__(self, *tensors, device='cpu'):
+        assert all(tensors[0].size(0) == tensor.size(0) for tensor in tensors)
+        self.tensors = tensors
+        self.device = device
+
+    def __getitem__(self, index):
+        return tuple(tensor[index].to(self.device) for tensor in self.tensors)
+
+    def __len__(self):
+        return self.tensors[0].size(0)
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
     
 def prep_data(data_dict, data_suffix, batch_size, device):
-    train_data  = torch.Tensor(data_dict['train_%s'%data_suffix]).to(device)
-    valid_data  = torch.Tensor(data_dict['valid_%s'%data_suffix]).to(device)
+    train_data  = torch.Tensor(data_dict['train_%s'%data_suffix])
+    valid_data  = torch.Tensor(data_dict['valid_%s'%data_suffix])
     
     num_trials, num_steps, input_size = train_data.shape
     
-    train_ds    = torch.utils.data.TensorDataset(train_data)
-    valid_ds    = torch.utils.data.TensorDataset(valid_data)
+    train_ds    = EcogTensorDataset(train_data,device=device)
+    valid_ds    = EcogTensorDataset(valid_data,device=device)
     
     train_dl    = torch.utils.data.DataLoader(train_ds, batch_size = batch_size, shuffle=True)
-    valid_dl    = torch.utils.data.DataLoader(valid_ds, batch_size = valid_data.shape[0])
+    valid_dl    = torch.utils.data.DataLoader(valid_ds, batch_size = batch_size)
     
     TIME = torch._np.arange(0, num_steps*data_dict['dt'], data_dict['dt'])
     

@@ -116,6 +116,10 @@ class LFADS_Loss(Base_Loss):
                      'l2'    : float(l2_loss.data),
                      'total' : float(loss.data)}
 
+        if torch.isinf(loss):
+            import matplotlib.pyplot as plt
+            breakpoint()
+
         return loss, loss_dict
     
 class Conv_LFADS_Loss(LFADS_Loss):

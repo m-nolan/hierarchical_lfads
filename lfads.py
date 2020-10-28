@@ -318,6 +318,37 @@ class LFADS_SingleSession_Net(LFADS_Net):
         recon = {'rates' : self.fc_logrates(factors).exp()}
         recon['data'] = recon['rates'].clone().permute(1, 0, 2)
         return recon, (factors, gen_inputs)
+
+class LFADS_Ecog_SingleSession_Net(LFADS_Net):
+
+    def __init__(self, input_size, factor_size = 4,
+                 g_encoder_size  = 64, c_encoder_size = 64,
+                 g_latent_size   = 64, u_latent_size  = 1,
+                 controller_size = 64, generator_size = 64,
+                 prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
+                                  'var'  : {'value': 0.1, 'learnable' : False}},
+                          'u'  : {'mean' : {'value': 0.0, 'learnable' : False},
+                                  'var'  : {'value': 0.1, 'learnable' : True},
+                                  'tau'  : {'value': 10,  'learnable' : True}}},
+                 clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
+                 do_normalize_factors=True, factor_bias = False, device='cpu'):
+
+        super(LFADS_Ecog_SingleSession_Net, self).__init__(input_size = input_size, factor_size = factor_size, prior = prior,
+                                                      g_encoder_size   = g_encoder_size, c_encoder_size = c_encoder_size,
+                                                      g_latent_size    = g_latent_size, u_latent_size = u_latent_size,
+                                                      controller_size  = controller_size, generator_size = generator_size,
+                                                      clip_val=clip_val, dropout=dropout, max_norm = max_norm, deep_freeze = deep_freeze,
+                                                      do_normalize_factors=do_normalize_factors, factor_bias = factor_bias, device=device)
+        
+        self.fc_logrates = nn.Linear(in_features= self.factor_size, out_features= self.input_size)
+        
+        self.initialize_weights()
+        
+    def forward(self, input):
+        factors, gen_inputs = super(LFADS_Ecog_SingleSession_Net, self).forward(input.permute(1, 0, 2))
+        recon = {'rates' : self.fc_logrates(factors)} # the trace data is both positive and negative; exp() is a poor inductive bias here
+        recon['data'] = recon['rates'].clone().permute(1, 0, 2)
+        return recon, (factors, gen_inputs)
     
 class LFADS_MultiSession_Net(LFADS_Net):
     

@@ -62,10 +62,9 @@ class RunManager():
                 loss_tic = time.time()
                 loss, loss_dict = self.objective(x_orig= x,
                                                  x_recon= recon,
-                                                 model= self.model)                
+                                                 model= self.model)
 #                 print('loss time: ', time.time()-loss_tic)
                 loss_dict_list.append(loss_dict)
-                
 
                 bw_tic = time.time()
                 loss.backward()

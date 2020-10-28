@@ -61,4 +61,4 @@ model:
   max_norm: 200
   normalize_factors: true
 
-model_name: lfads
+model_name: lfads_ecog
