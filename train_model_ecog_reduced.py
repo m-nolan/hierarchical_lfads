@@ -1,7 +1,8 @@
-#!/home/ws5/anaconda3/envs/ecog_is2s/bin/python
+#!/usr/bin/env python
 
 import argparse
 import os
+from shutil import rmtree # dangerous...
 
 import torch
 import torchvision
@@ -108,7 +109,6 @@ def main():
                              do_health_check = args.do_health_check,
                              detect_local_minima = args.detect_local_minima,
                              load_checkpoint=(not args.restart))
-
     run_manager.run()
         
     save_figs(save_loc, run_manager.model, run_manager.valid_dl, plotter)
@@ -543,7 +543,7 @@ def save_figs(save_loc, model, dl, plotter):
     fig_folder = save_loc + 'figs' + os.path.sep
     
     if os.path.exists(fig_folder):
-        os.system('rm -rf %s'%fig_folder)
+        rmtree(fig_folder)
     os.mkdir(fig_folder)
     
     from matplotlib.figure import Figure
