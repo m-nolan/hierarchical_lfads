@@ -360,7 +360,7 @@ def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=[
     train_dl    = torch.utils.data.DataLoader(train_ds, batch_size = batch_size, shuffle=True)
     valid_dl    = torch.utils.data.DataLoader(valid_ds, batch_size = batch_size)
     
-    TIME = torch._np.arange(0, num_steps*data_dict['dt'], data_dict['dt'])
+    TIME = torch.arange(num_steps)*data_dict['dt']
     
     train_truth = {}
     if 'train_rates' in data_dict.keys():
@@ -529,6 +529,7 @@ def generate_save_loc(args, hyperparams, orion_hp_string):
     if args.data_suffix == 'ospikes':
         model_name += '_oasis'
     mhp_list = [key.replace('size', '').replace('deep', 'd').replace('obs', 'o').replace('_', '')[:4] + str(val) for key, val in hyperparams['model'].items() if 'size' in key]
+    mhp_list.append(f'seqlen{args.seq_len}')
     mhp_list.sort()
     hyperparams['run_name'] = '_'.join(mhp_list)
     hyperparams['run_name'] += orion_hp_string
