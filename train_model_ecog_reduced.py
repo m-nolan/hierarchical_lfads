@@ -49,6 +49,7 @@ parser.add_argument('--log10_l2_gen_scale', type=float, default=None)
 parser.add_argument('--log10_l2_con_scale', type=float, default=None)
 
 parser.add_argument('--seq_len', type=int, default=50)
+parser.add_argument('--ch_idx', nargs='+', type=int, default=None)
 parser.add_argument('--device_num', type=int, default=None)
 
 def main():
@@ -80,6 +81,7 @@ def main():
                                                                data_suffix = args.data_suffix,
                                                                batch_size  = args.batch_size,
                                                                seq_len = args.seq_len,
+                                                               ch_idx = args.ch_idx,
                                                                device = device,
                                                                hyperparams = hyperparams)
         
@@ -116,9 +118,9 @@ def main():
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None):
+def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None):
     if model_name == 'lfads':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device)
+        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
         model, objective = prep_lfads(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
@@ -127,7 +129,7 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       )
 
     if model_name == 'lfads_ecog':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len)
+        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx)
         model, objective = prep_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
@@ -346,9 +348,12 @@ class EcogTensorDataset(Dataset):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
     
-def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=[10]):
+def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=None):
     if seq_len is None:
         seq_len = data_dict[f'train_{data_suffix}'].shape[1]
+    if ch_idx is None:
+        n_ch = data_dict[f'train_{data_suffix}'].shape[2]
+        ch_idx = torch.arange(n_ch)
     train_data  = torch.Tensor(data_dict['train_%s'%data_suffix])[:,:seq_len,ch_idx]
     valid_data  = torch.Tensor(data_dict['valid_%s'%data_suffix])[:,:seq_len,ch_idx]
     
@@ -530,6 +535,7 @@ def generate_save_loc(args, hyperparams, orion_hp_string):
         model_name += '_oasis'
     mhp_list = [key.replace('size', '').replace('deep', 'd').replace('obs', 'o').replace('_', '')[:4] + str(val) for key, val in hyperparams['model'].items() if 'size' in key]
     mhp_list.append(f'seqlen{args.seq_len}')
+    mhp_list.append(f'nch{len(args.ch_idx)}')
     mhp_list.sort()
     hyperparams['run_name'] = '_'.join(mhp_list)
     hyperparams['run_name'] += orion_hp_string
