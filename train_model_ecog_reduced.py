@@ -5,6 +5,7 @@ import os
 from shutil import rmtree # dangerous...
 
 import torch
+from torch.nn import DataParallel
 import torchvision
 import torch.optim as opt
 import torchvision.transforms as trf
@@ -83,7 +84,8 @@ def main():
                                                                seq_len = args.seq_len,
                                                                ch_idx = args.ch_idx,
                                                                device = device,
-                                                               hyperparams = hyperparams)
+                                                               hyperparams = hyperparams
+                                                               multidevice = True)
         
     print_model_description(model)
         
@@ -118,7 +120,7 @@ def main():
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None):
+def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False):
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
         model, objective = prep_lfads(input_dims = input_dims,
@@ -135,7 +137,7 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       device= device,
                                       dtype=train_dl.dataset.tensors[0].dtype,
                                       dt= data_dict['dt']
-                                      )
+                                      multidevice=multidevice)
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -207,7 +209,7 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt):
+def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice):
     from objective import LFADS_Loss, LogLikelihoodGaussian
     from lfads import LFADS_Ecog_SingleSession_Net
 
@@ -224,7 +226,12 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt):
                                     dropout              = hyperparams['model']['dropout'],
                                     do_normalize_factors = hyperparams['model']['normalize_factors'],
                                     max_norm             = hyperparams['model']['max_norm'],
-                                    device               = device).to(device)
+                                    device               = device)
+    
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+
+    model.to(device)
     
     loglikelihood = LogLikelihoodGaussian()
 
