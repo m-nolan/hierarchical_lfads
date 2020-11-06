@@ -4,6 +4,7 @@ python train_model_ecog_reduced.py ^
 -p C:\Users\mickey\aoLab\code\hierarchical_lfads\hyperparameters\ecog\lfads_ecog_3.yaml ^
 -o D:\Users\mickey\Data\models\pyt\lfads ^
 --data_suffix ecog_fl0u20 ^
---max_epochs 30000 ^
+--max_epochs 1500 ^
 --batch_size 3000 ^
+--seq_len 50 ^
 -t
