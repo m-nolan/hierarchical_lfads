@@ -103,6 +103,10 @@ class LFADS_Loss(Base_Loss):
         
         recon_loss = -self.loglikelihood(x_orig, x_recon['data'])
 
+        # access model methods/loss terms instead of DataParallel methods
+        if type(model) is 'DataParallel':
+            model = model.module
+
         kl_loss = kl_weight * model.kl_div()
     
         l2_loss = 0.5 * l2_weight * self.l2_gen_scale * model.generator.gru_generator.hidden_weight_l2_norm()
@@ -203,14 +207,19 @@ def loglikelihood_poissonsimple(k, lam):
     return (k * torch.log(lam) - lam).mean(dim=0).sum()
 
 class LogLikelihoodGaussian(nn.Module):
-    def __init__(self):
+    def __init__(self, mse=True):
         super(LogLikelihoodGaussian, self).__init__()
+        self.mse = mse
         
     def forward(self, x, mean, logvar=None):
         if logvar is not None:
-            return loglikelihood_gaussian(x, mean, logvar)
+            out = loglikelihood_gaussian(x, mean, logvar)
         else:
-            return -torch.nn.functional.mse_loss(x, mean, reduction='sum')/x.shape[0]
+            if self.mse:
+                out = -torch.nn.functional.mse_loss(x, mean, reduction='sum')/x.shape[0]
+            else:
+                out = -torch.nn.functional.l1_loss(x,mean,reduction='sum')/x.shape[0]
+        return out
     
 def loglikelihood_gaussian(x, mean, logvar):
     from math import pi

@@ -69,6 +69,7 @@ def main():
     orion_hp_string, hyperparams = prep_orion(args, hyperparams)
 
     save_loc, hyperparams = generate_save_loc(args, hyperparams, orion_hp_string)
+    save_loc = save_loc + 'l1'
     
     save_parameters(save_loc, hyperparams)
     
@@ -85,7 +86,8 @@ def main():
                                                                ch_idx = args.ch_idx,
                                                                device = device,
                                                                hyperparams = hyperparams,
-                                                               multidevice = False)
+                                                               multidevice = False,
+                                                               mse = False)
         
     print_model_description(model)
         
@@ -120,7 +122,7 @@ def main():
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False):
+def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True):
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
         model, objective = prep_lfads(input_dims = input_dims,
@@ -137,7 +139,8 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       device= device,
                                       dtype=train_dl.dataset.tensors[0].dtype,
                                       dt= data_dict['dt'],
-                                      multidevice = multidevice)
+                                      multidevice=multidevice,
+                                      mse=mse)
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -209,7 +212,7 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice):
+def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True):
     from objective import LFADS_Loss, LogLikelihoodGaussian
     from lfads import LFADS_Ecog_SingleSession_Net
 
@@ -233,7 +236,7 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice):
 
     model.to(device)
     
-    loglikelihood = LogLikelihoodGaussian()
+    loglikelihood = LogLikelihoodGaussian(mse=mse)
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
