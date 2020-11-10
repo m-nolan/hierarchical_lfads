@@ -84,8 +84,8 @@ def main():
                                                                seq_len = args.seq_len,
                                                                ch_idx = args.ch_idx,
                                                                device = device,
-                                                               hyperparams = hyperparams
-                                                               multidevice = True)
+                                                               hyperparams = hyperparams,
+                                                               multidevice = False)
         
     print_model_description(model)
         
@@ -136,8 +136,8 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       hyperparams=hyperparams,
                                       device= device,
                                       dtype=train_dl.dataset.tensors[0].dtype,
-                                      dt= data_dict['dt']
-                                      multidevice=multidevice)
+                                      dt= data_dict['dt'],
+                                      multidevice = multidevice)
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -228,8 +228,8 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice):
                                     max_norm             = hyperparams['model']['max_norm'],
                                     device               = device)
     
-    if torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model)
+    if multidevice and torch.cuda.device_count() > 1:
+        model = DataParallel(model)
 
     model.to(device)
     
