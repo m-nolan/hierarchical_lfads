@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from torch.nn import DataParallel
 import torchvision
 import time
 import os
@@ -74,15 +75,25 @@ class RunManager():
 #                     break
 
                 # Clip gradient norm
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.model.max_norm)
+                if isinstance(self.model,DataParallel):
+                    max_norm = self.model.module.max_norm
+                else:
+                    max_norm = self.model.max_norm
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_norm)
                 # update the weights
                 self.optimizer.step()
 
                 
                 self.objective.weight_schedule_fn(self.step)
-                
-                if self.model.do_normalize_factors:
-                    self.model.normalize_factors()
+                if isinstance(self.model,DataParallel):
+                    do_normalize_factors = self.model.module.do_normalize_factors
+                else:
+                    do_normalize_factors = self.model.do_normalize_factors
+                if do_normalize_factors:
+                    if isinstance(self.model,DataParallel):
+                        self.model.module.normalize_factors()
+                    else:
+                        self.model.normalize_factors()
 
                     # Row-normalise fc_factors (See bullet-point 11 of section 1.9 of online methods)
                     
@@ -252,8 +263,11 @@ class RunManager():
         # Save network parameters, optimizer state, and training variables
         if not os.path.isdir(self.save_loc+'checkpoints/'):
             os.mkdir(self.save_loc+'checkpoints/')
-        
-        torch.save({'net' : self.model.state_dict(), 'opt' : self.optimizer.state_dict(),
+        if isinstance(self.model,torch.nn.DataParallel):
+            net_state_dict = self.model.module.state_dict()
+        else:
+            net_state_dict = self.model.state_dict()
+        torch.save({'net' : net_state_dict , 'opt' : self.optimizer.state_dict(),
                     'sched': self.scheduler.state_dict(), 'run_manager' : train_dict},
                      self.save_loc+'checkpoints/' + output_filename + '.pth')
         
@@ -263,7 +277,11 @@ class RunManager():
     def load_checkpoint(self, input_filename='recent'):
         if os.path.exists(self.save_loc + 'checkpoints/' + input_filename + '.pth'):
             state_dict = torch.load(self.save_loc + 'checkpoints/' + input_filename + '.pth')
-            self.model.load_state_dict(state_dict['net'],strict=False)
+            
+            if isinstance(self.model, torch.nn.DataParallel):
+                self.model.module.load_state_dict(state_dict['net'],strict=False)
+            else:
+                self.model.load_state_dict(state_dict['net'],strict=False)
             print(state_dict['run_manager']['step'])
             if len(state_dict['opt']['param_groups']) > 1:
                 self.optimizer, self.scheduler = self.model.change_parameter_grad_status(state_dict['run_manager']['step'], self.optimizer, self.scheduler, loading_checkpoint=True)

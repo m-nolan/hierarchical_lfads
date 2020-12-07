@@ -43,7 +43,6 @@ class Plotter(object):
         figs_dict = {}
         
         data = dl.dataset.tensors[0]
-        
         batch_example, ix = batchify_random_sample(data=data, batch_size=num_average, ix=ix)
         batch_example = batch_example.to(model.device)
         figs_dict['ix'] = ix

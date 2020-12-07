@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.nn.parallel.data_parallel import DataParallel
 import pdb
 from math import log
 
@@ -104,7 +105,7 @@ class LFADS_Loss(Base_Loss):
         recon_loss = -self.loglikelihood(x_orig, x_recon['data'])
 
         # access model methods/loss terms instead of DataParallel methods
-        if type(model) is 'DataParallel':
+        if isinstance(model,DataParallel):
             model = model.module
 
         kl_loss = kl_weight * model.kl_div()
