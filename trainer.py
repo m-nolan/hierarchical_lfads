@@ -263,7 +263,7 @@ class RunManager():
     def load_checkpoint(self, input_filename='recent'):
         if os.path.exists(self.save_loc + 'checkpoints/' + input_filename + '.pth'):
             state_dict = torch.load(self.save_loc + 'checkpoints/' + input_filename + '.pth')
-            self.model.load_state_dict(state_dict['net'])
+            self.model.load_state_dict(state_dict['net'],strict=False)
             print(state_dict['run_manager']['step'])
             if len(state_dict['opt']['param_groups']) > 1:
                 self.optimizer, self.scheduler = self.model.change_parameter_grad_status(state_dict['run_manager']['step'], self.optimizer, self.scheduler, loading_checkpoint=True)

@@ -5,6 +5,7 @@ from objective import kldiv_gaussian_gaussian
 from rnn import LFADS_GenGRUCell
 from math import log
 import pdb
+import time
 
 class LFADS_Net(nn.Module):
     '''
@@ -49,7 +50,7 @@ class LFADS_Net(nn.Module):
                                   'var'  : {'value': 0.1, 'learnable' : True},
                                   'tau'  : {'value': 10,  'learnable' : True}}},
                  clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
-                 do_normalize_factors=True, factor_bias = False, device='cpu'):
+                 do_normalize_factors=True, factor_bias = False, attn = False, device='cpu'):
         
         super(LFADS_Net, self).__init__()
         
@@ -62,11 +63,14 @@ class LFADS_Net(nn.Module):
         self.controller_size      = controller_size
         self.generator_size       = generator_size
         self.factor_size          = factor_size
+        self.attention_size = torch.nan # how big is this supposed to be? this will be a sum of defined layer sizes.
+
         
         self.clip_val             = clip_val
         self.max_norm             = max_norm
         self.do_normalize_factors = do_normalize_factors
         self.factor_bias          = factor_bias
+        self.attn                 = attn
         self.device               = device
         self.deep_freeze          = deep_freeze
         
@@ -89,12 +93,20 @@ class LFADS_Net(nn.Module):
                                                     dropout         = dropout)
         
         # Initialize generator RNN
-        self.generator   = LFADS_GeneratorCell(input_size     = self.u_latent_size,
-                                               generator_size = self.generator_size,
-                                               factor_size    = self.factor_size,
-                                               clip_val       = self.clip_val,
-                                               factor_bias    = self.factor_bias,
-                                               dropout        = dropout)
+        if self.attn:
+            self.generator  = LFADS_GeneratorAttnCell(input_size     = self.u_latent_size,
+                                                generator_size = self.generator_size,
+                                                factor_size    = self.factor_size,
+                                                clip_val       = self.clip_val,
+                                                factor_bias    = self.factor_bias,
+                                                dropout        = dropout)
+        else:
+            self.generator   = LFADS_GeneratorCell(input_size     = self.u_latent_size,
+                                                generator_size = self.generator_size,
+                                                factor_size    = self.factor_size,
+                                                clip_val       = self.clip_val,
+                                                factor_bias    = self.factor_bias,
+                                                dropout        = dropout)
         
         # Initialize dense layers
         if self.g_latent_size == self.generator_size:
@@ -109,10 +121,10 @@ class LFADS_Net(nn.Module):
             self.controller_init = nn.Parameter(torch.zeros(self.controller_size))
         
         # Initialize priors
-#         self.register_buffer('g_prior_mean',None)
-#         self.register_buffer('g_prior_logvar',None)
-#         self.register_buffer('g_posterior_mean',None)
-#         self.register_buffer('g_posterior_logvar',None)
+        self.register_buffer('g_prior_mean',None)
+        self.register_buffer('g_prior_logvar',None)
+        self.register_buffer('g_posterior_mean',None)
+        self.register_buffer('g_posterior_logvar',None)
         
         self.g_prior_mean = torch.ones(self.g_latent_size, device=device) * prior['g0']['mean']['value']
         
@@ -143,6 +155,71 @@ class LFADS_Net(nn.Module):
         Required Arguments:
             - input (torch.Tensor): input data with dimensions [time x batch x cells]
         '''
+        # tic = time.time()
+
+        # Initialize hidden states
+        g_encoder_state, c_encoder_state, controller_state = self.initialize_hidden_states(input) 
+
+        
+        # Encode input and calculate and calculate generator initial condition variational posterior distribution
+        self.g_posterior_mean, self.g_posterior_logvar, out_gru_g_enc, out_gru_c_enc = self.encoder(input, (g_encoder_state, c_encoder_state))
+        
+
+        # Sample generator state
+        generator_state = self.fc_genstate(self.sample_gaussian(self.g_posterior_mean, self.g_posterior_logvar))
+        
+        # Initialize factor state
+        factor_state = self.generator.fc_factors(self.dropout(generator_state))
+        
+        # Factors store
+        factors = torch.empty(0, self.batch_size, self.factor_size, device=self.device)
+        
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            # initialize generator input store
+            gen_inputs = torch.empty(0, self.batch_size, self.u_latent_size, device=self.device)
+            
+            # initialize u posterior store
+            self.u_posterior_mean   = torch.empty(self.batch_size, 0, self.u_latent_size, device=self.device)
+            self.u_posterior_logvar = torch.empty(self.batch_size, 0, self.u_latent_size, device=self.device)
+        
+        # tic = time.time()
+        
+        # Controller and Generator Loop
+        for t in range(self.steps_size):
+            if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+                # Update controller state and calculate generator input variational posterior distribution
+                u_mean, u_logvar, controller_state = self.controller(torch.cat((out_gru_c_enc[t], factor_state), dim=1), controller_state)
+                
+                # Append u_posterior mean and logvar
+                self.u_posterior_mean = torch.cat((self.u_posterior_mean, u_mean.unsqueeze(1)), dim=1)
+                self.u_posterior_logvar = torch.cat((self.u_posterior_logvar, u_logvar.unsqueeze(1)), dim=1)
+
+                # Sample generator input
+                generator_input = self.sample_gaussian(u_mean, u_logvar)
+                # Append generator input to store
+                gen_inputs  = torch.cat((gen_inputs, generator_input.unsqueeze(0)), dim=0)
+            else:
+                generator_input = torch.empty(self.batch_size, self.u_latent_size, device=self.device)
+                gen_inputs = None
+                
+            # Update generator and factor state
+            generator_state, factor_state = self.generator(generator_input, generator_state)
+            # Store factor state
+            factors = torch.cat((factors, factor_state.unsqueeze(0)), dim=0)
+            
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            # Instantiate AR1 process as mean and variance per time step
+            self.u_prior_mean, self.u_prior_logvar = self._gp_to_normal(self.u_prior_gp_mean, self.u_prior_gp_logvar, self.u_prior_gp_logtau, gen_inputs)
+        
+        return (factors, gen_inputs)
+
+    def forward_all(self, input):
+        '''
+        forward(input)
+        
+        Required Arguments:
+            - input (torch.Tensor): input data with dimensions [time x batch x cells]
+        '''
         import time
         tic = time.time()
 
@@ -160,6 +237,9 @@ class LFADS_Net(nn.Module):
         # Initialize factor state
         factor_state = self.generator.fc_factors(self.dropout(generator_state))
         
+        # generator store
+        generators = torch.empty(0,self.batch_size, self.generator_size, device=self.device)
+
         # Factors store
         factors = torch.empty(0, self.batch_size, self.factor_size, device=self.device)
         
@@ -195,12 +275,13 @@ class LFADS_Net(nn.Module):
             generator_state, factor_state = self.generator(generator_input, generator_state)
             # Store factor state
             factors = torch.cat((factors, factor_state.unsqueeze(0)), dim=0)
+            generators = torch.cat((generators, generator_state.unsqueeze(0)), dim=0)
             
         if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
             # Instantiate AR1 process as mean and variance per time step
             self.u_prior_mean, self.u_prior_logvar = self._gp_to_normal(self.u_prior_gp_mean, self.u_prior_gp_logvar, self.u_prior_gp_logtau, gen_inputs)
         
-        return (factors, gen_inputs)
+        return (factors, generators, gen_inputs)
     
     def sample_gaussian(self, mean, logvar):
         '''
@@ -269,10 +350,10 @@ class LFADS_Net(nn.Module):
 
             if self.do_normalize_factors:
                 self.normalize_factors()
-                
+     
     def normalize_factors(self):
         self.generator.fc_factors.weight.data = F.normalize(self.generator.fc_factors.weight.data, dim=1)
-        
+    
     def change_parameter_grad_status(self, step, optimizer, scheduler, loading_checkpoint=False):
         return optimizer, scheduler
     
@@ -319,6 +400,12 @@ class LFADS_SingleSession_Net(LFADS_Net):
         recon['data'] = recon['rates'].clone().permute(1, 0, 2)
         return recon, (factors, gen_inputs)
 
+    def forward_all(self, input):
+        factors, generators, gen_inputs = super(LFADS_SingleSession_Net, self).forward_all(input.permute(1, 0, 2))
+        recon = {'rates' : self.fc_logrates(factors).exp()}
+        recon['data'] = recon['rates'].clone().permute(1, 0, 2)
+        return recon, (factors, generators, gen_inputs)
+
 class LFADS_Ecog_SingleSession_Net(LFADS_Net):
 
     def __init__(self, input_size, factor_size = 4,
@@ -331,14 +418,14 @@ class LFADS_Ecog_SingleSession_Net(LFADS_Net):
                                   'var'  : {'value': 0.1, 'learnable' : True},
                                   'tau'  : {'value': 10,  'learnable' : True}}},
                  clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
-                 do_normalize_factors=True, factor_bias = False, device='cpu'):
+                 do_normalize_factors=True, factor_bias = False, attn=True, device='cpu'):
 
         super(LFADS_Ecog_SingleSession_Net, self).__init__(input_size = input_size, factor_size = factor_size, prior = prior,
                                                       g_encoder_size   = g_encoder_size, c_encoder_size = c_encoder_size,
                                                       g_latent_size    = g_latent_size, u_latent_size = u_latent_size,
                                                       controller_size  = controller_size, generator_size = generator_size,
                                                       clip_val=clip_val, dropout=dropout, max_norm = max_norm, deep_freeze = deep_freeze,
-                                                      do_normalize_factors=do_normalize_factors, factor_bias = factor_bias, device=device)
+                                                      do_normalize_factors=do_normalize_factors, factor_bias = factor_bias, attn=attn, device=device)
         
         self.fc_logrates = nn.Linear(in_features= self.factor_size, out_features= self.input_size)
         
@@ -349,8 +436,14 @@ class LFADS_Ecog_SingleSession_Net(LFADS_Net):
         recon = {'rates' : self.fc_logrates(factors)} # the trace data is both positive and negative; exp() is a poor inductive bias here
         recon['data'] = recon['rates'].clone().permute(1, 0, 2)
         return recon, (factors, gen_inputs)
+
+    def forward_all(self, input):
+        factors, generators, gen_inputs = super(LFADS_Ecog_SingleSession_Net, self).forward_all(input.permute(1, 0, 2))
+        recon = {'rates' : self.fc_logrates(factors)}
+        recon['data'] = recon['rates'].clone().permute(1, 0, 2)
+        return recon, (factors, generators, gen_inputs)
     
-class LFADS_MultiSession_Net(LFADS_Net):
+class LFADS_MultiSession_Net(LFADS_Net): # for aligning multiple subjects/recordings where things drift.
     
     def __init__(self, W_in_list, W_out_list, b_in_list, b_out_list, factor_size = 4,
                  g_encoder_size  = 64, c_encoder_size = 64,
@@ -500,6 +593,34 @@ class LFADS_GeneratorCell(nn.Module):
         
         return generator_state, factor_state
 
+class LFADS_GeneratorAttnCell(nn.Module):
+
+    def __init__(self, input_size, generator_size, factor_size, dropout = 0.0, clip_val = 5.0, factor_bias = False):
+        super(LFADS_GeneratorAttnCell, self).__init__()
+        self.input_size = input_size
+        self.generator_size = generator_size
+        self.factor_size = factor_size
+        self.dropout = nn.Dropout(dropout)
+        self.clip_val = clip_val
+        self.gru_generator = LFADS_GenGRUCell(input=input_size, hidden_size=generator_size)
+        self.fc_factors = nn.Linear(in_features=generator_size, out_features=factor_size, bias=factor_bias)
+        self.attn = nn.Linear(in_features=input_size+generator_size, out_features=generator_size) # the new thing
+        self.attn_combine = nn.Linear(in_features=input_size+generator_size,out_features=generator_size)
+
+    def forward(self, input, hidden, encoder_outputs):
+
+        # attention mapping
+        breakpoint()
+        attn_weights = F.softmax(self.attn(torch.cat((input[0],hidden[0]),1)),dim=1)
+        attn_applied = torch.bmm(attn_weights.unsqueeze(0), encoder_outputs.unsqueeze(0))
+        input = F.relu(self.attn_combine(torch.cat((input[0],attn_applied[0]), 1)).unsqueeze(0))
+
+        generator_state = hidden
+
+        generator_state = self.gru_generator(input, generator_state).clamp(min=-self.clip_val, max=self.clip_val)
+        factor_state    = self.fc_factors(self.dropout(generator_state))
+
+        return generator_state, factor_state
     
 class Identity(nn.Module):
     def __init__(self, in_features, out_features):

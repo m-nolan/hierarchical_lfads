@@ -6,8 +6,8 @@ import os
 import torch
 import torchvision
 import torch.optim as opt
-import torchvision.transforms as trf
 from torch.utils.data.dataset import Dataset
+import torchvision.transforms as trf
 import pickle
 
 from orion.client import report_results
@@ -73,7 +73,7 @@ def main():
                                                                hyperparams = hyperparams)
         
     print_model_description(model)
-        
+    
     transforms = trf.Compose([])
     
     optimizer, scheduler = prep_optimizer(model, hyperparams)
@@ -110,15 +110,6 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
         model, objective = prep_lfads(input_dims = input_dims,
-                                      hyperparams=hyperparams,
-                                      device= device,
-                                      dtype=train_dl.dataset.tensors[0].dtype,
-                                      dt= data_dict['dt']
-                                      )
-
-    if model_name == 'lfads_ecog':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
-        model, objective = prep_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
                                       dtype=train_dl.dataset.tensors[0].dtype,
@@ -183,39 +174,6 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
                                     device               = device).to(device)
     
     loglikelihood = LogLikelihoodPoisson(dt=float(dt))
-
-    objective = LFADS_Loss(loglikelihood            = loglikelihood,
-                           loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
-                                                       'l2': hyperparams['objective']['l2']},
-                           l2_con_scale             = hyperparams['objective']['l2_con_scale'],
-                           l2_gen_scale             = hyperparams['objective']['l2_gen_scale']).to(device)
-
-    return model, objective
-
-#-------------------------------------------------------------------
-#-------------------------------------------------------------------
-
-def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt):
-    from objective import LFADS_Loss, LogLikelihoodGaussian
-    from lfads import LFADS_Ecog_SingleSession_Net
-
-    model = LFADS_Ecog_SingleSession_Net(input_size           = input_dims,
-                                    factor_size          = hyperparams['model']['factor_size'],
-                                    g_encoder_size       = hyperparams['model']['g_encoder_size'],
-                                    c_encoder_size       = hyperparams['model']['c_encoder_size'],
-                                    g_latent_size        = hyperparams['model']['g_latent_size'],
-                                    u_latent_size        = hyperparams['model']['u_latent_size'],
-                                    controller_size      = hyperparams['model']['controller_size'],
-                                    generator_size       = hyperparams['model']['generator_size'],
-                                    prior                = hyperparams['model']['prior'],
-                                    clip_val             = hyperparams['model']['clip_val'],
-                                    dropout              = hyperparams['model']['dropout'],
-                                    do_normalize_factors = hyperparams['model']['normalize_factors'],
-                                    max_norm             = hyperparams['model']['max_norm'],
-                                    attn                 = True # add to hyperparameter list!
-                                    device               = device).to(device)
-    
-    loglikelihood = LogLikelihoodGaussian()
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
@@ -315,7 +273,7 @@ def prep_svlae(input_dims, hyperparams, device, dtype, dt):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 # move this later
-class EcogTensorDataset(Dataset):
+class SpikeTensorDataset(Dataset):
     r"""Dataset wrapping tensors.
 
     Each sample will be retrieved by indexing tensors along the first dimension.
@@ -334,22 +292,25 @@ class EcogTensorDataset(Dataset):
 
     def __len__(self):
         return self.tensors[0].size(0)
+
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
     
 def prep_data(data_dict, data_suffix, batch_size, device):
-    train_data  = torch.Tensor(data_dict['train_%s'%data_suffix])
-    valid_data  = torch.Tensor(data_dict['valid_%s'%data_suffix])
+    if 'dt' not in data_dict.keys():
+        data_dict['dt'] = 0.001
+    train_data  = torch.Tensor(1.0*data_dict['train_%s'%data_suffix])  # forces conversion to float.
+    valid_data  = torch.Tensor(1.0*data_dict['valid_%s'%data_suffix])
     
     num_trials, num_steps, input_size = train_data.shape
     
-    train_ds    = EcogTensorDataset(train_data,device=device)
-    valid_ds    = EcogTensorDataset(valid_data,device=device)
+    train_ds    = SpikeTensorDataset(train_data,device=device)
+    valid_ds    = SpikeTensorDataset(valid_data,device=device)
     
     train_dl    = torch.utils.data.DataLoader(train_ds, batch_size = batch_size, shuffle=True)
     valid_dl    = torch.utils.data.DataLoader(valid_ds, batch_size = batch_size)
     
-    TIME = torch._np.arange(0, num_steps*data_dict['dt'], data_dict['dt'])
+    TIME = torch.arange(num_steps)*data_dict['dt']
     
     train_truth = {}
     if 'train_rates' in data_dict.keys():
@@ -438,7 +399,7 @@ def print_model_description(model):
 def prep_tensorboard(save_loc, plotter, restart):
     import importlib
     if importlib.util.find_spec('torch.utils.tensorboard'):
-        tb_folder = save_loc + 'tensorboard/'
+        tb_folder = os.path.join(save_loc,'tensorboard/')
         if not os.path.exists(tb_folder):
             os.mkdir(tb_folder)
         elif os.path.exists(tb_folder) and restart:
@@ -521,14 +482,15 @@ def generate_save_loc(args, hyperparams, orion_hp_string):
     mhp_list.sort()
     hyperparams['run_name'] = '_'.join(mhp_list)
     hyperparams['run_name'] += orion_hp_string
-    save_loc = '%s/%s/%s/%s/'%(args.output_dir, data_name, model_name, hyperparams['run_name'])
+    _dir = str(args.output_dir)
+    save_loc = os.path.join(_dir, data_name, model_name, hyperparams['run_name']) + os.path.sep
     return save_loc, hyperparams
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
     
 def save_figs(save_loc, model, dl, plotter):
-    fig_folder = save_loc + 'figs' + os.path.sep
+    fig_folder = os.path.join(save_loc,'figs')
     
     if os.path.exists(fig_folder):
         os.system('rm -rf %s'%fig_folder)
@@ -540,7 +502,7 @@ def save_figs(save_loc, model, dl, plotter):
     fig_dict = plotter['valid'].plot_summary(model= model, dl= dl)
     for k, v in fig_dict.items():
         if type(v) == Figure:
-            v.savefig(fig_folder+k+'.svg')
+            v.savefig(os.path.join(fig_folder,k+'.svg'))
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
