@@ -7,6 +7,7 @@ python train_model_ecog_reduced.py \
 -o /home/ws5/manolan/data/models/pyt/lfads \
 --data_suffix ecog \
 --device_num 1 \
+--multidevice \
 --max_epochs 3500 \
 --batch_size 1500 \
 --seq_len 50 \

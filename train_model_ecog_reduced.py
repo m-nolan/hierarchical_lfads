@@ -52,6 +52,8 @@ parser.add_argument('--log10_l2_con_scale', type=float, default=None)
 parser.add_argument('--seq_len', type=int, default=50)
 parser.add_argument('--ch_idx', nargs='+', type=int, default=None)
 parser.add_argument('--device_num', type=int, default=None)
+parser.add_argument('--multidevice', action='store_true', default=False)
+parser.add_argument('--loss', type=str, default='mse')
 
 def main():
     args = parser.parse_args()
@@ -69,7 +71,7 @@ def main():
     orion_hp_string, hyperparams = prep_orion(args, hyperparams)
 
     save_loc, hyperparams = generate_save_loc(args, hyperparams, orion_hp_string)
-    save_loc = save_loc + 'l1'
+    save_loc = save_loc[:-1] + 'varstd' + os.sep
     
     save_parameters(save_loc, hyperparams)
     
@@ -78,6 +80,7 @@ def main():
         
     data_dict   = read_data(args.data_path)
 
+    mse = args.loss == 'mse'
     train_dl, valid_dl, plotter, model, objective = prep_model(model_name  = args.model,
                                                                data_dict   = data_dict,
                                                                data_suffix = args.data_suffix,
@@ -86,8 +89,8 @@ def main():
                                                                ch_idx = args.ch_idx,
                                                                device = device,
                                                                hyperparams = hyperparams,
-                                                               multidevice = False,
-                                                               mse = False)
+                                                               multidevice = args.multidevice,
+                                                               mse = mse)
         
     print_model_description(model)
         
@@ -100,7 +103,10 @@ def main():
     else:
         writer = None
         rm_plotter = None
-        
+    
+    # the plotter is broken. ignore for now, plot results later.
+    rm_plotter = None
+    
     run_manager = RunManager(model      = model,
                              objective  = objective,
                              optimizer  = optimizer,
@@ -122,6 +128,17 @@ def main():
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
+
+class DataParallelPassthrough(torch.nn.DataParallel):
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.module, name)
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
 def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True):
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
@@ -232,7 +249,7 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
                                     device               = device)
     
     if multidevice and torch.cuda.device_count() > 1:
-        model = DataParallel(model)
+        model = DataParallelPassthrough(model)
 
     model.to(device)
     
@@ -430,6 +447,8 @@ def prep_video(data_dict, batch_size, device):
 
 def prep_optimizer(model, hyperparams):
     
+    if isinstance(model,DataParallel):
+        model=model.module
     optimizer = opt.Adam([p for p in model.parameters() if p.requires_grad],
                          lr=hyperparams['optimizer']['lr_init'],
                          betas=hyperparams['optimizer']['betas'],
@@ -545,7 +564,11 @@ def generate_save_loc(args, hyperparams, orion_hp_string):
         model_name += '_oasis'
     mhp_list = [key.replace('size', '').replace('deep', 'd').replace('obs', 'o').replace('_', '')[:4] + str(val) for key, val in hyperparams['model'].items() if 'size' in key]
     mhp_list.append(f'seqlen{args.seq_len}')
-    mhp_list.append(f'nch{len(args.ch_idx)}')
+    if args.ch_idx is None:
+        n_ch = 42 # bad magic number, get dataset info involved
+    else:
+        n_ch = len(args.ch_idx)
+    mhp_list.append(f'nch{n_ch}')
     mhp_list.sort()
     hyperparams['run_name'] = '_'.join(mhp_list)
     hyperparams['run_name'] += orion_hp_string

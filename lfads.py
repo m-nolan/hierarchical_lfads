@@ -109,10 +109,10 @@ class LFADS_Net(nn.Module):
             self.controller_init = nn.Parameter(torch.zeros(self.controller_size))
         
         # Initialize priors
-#         self.register_buffer('g_prior_mean',None)
-#         self.register_buffer('g_prior_logvar',None)
-#         self.register_buffer('g_posterior_mean',None)
-#         self.register_buffer('g_posterior_logvar',None)
+        self.register_buffer('g_prior_mean',torch.tensor(0.0))
+        self.register_buffer('g_prior_logvar',torch.tensor(0.1))
+        self.register_buffer('g_posterior_mean',torch.tensor(0.0))
+        self.register_buffer('g_posterior_logvar',torch.tensor(0.1))
         
         self.g_prior_mean = torch.ones(self.g_latent_size, device=device) * prior['g0']['mean']['value']
         
