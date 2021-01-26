@@ -54,6 +54,8 @@ parser.add_argument('--ch_idx', nargs='+', type=int, default=None)
 parser.add_argument('--device_num', type=int, default=None)
 parser.add_argument('--multidevice', action='store_true', default=False)
 parser.add_argument('--loss', type=str, default='mse')
+parser.add_argument('--predict', action='store_true', default=False)
+parser.add_argument('--attention', action='store_true', default=False)
 
 def main():
     args = parser.parse_args()
@@ -90,7 +92,8 @@ def main():
                                                                device = device,
                                                                hyperparams = hyperparams,
                                                                multidevice = args.multidevice,
-                                                               mse = mse)
+                                                               mse = mse,
+                                                               attention = args.attention)
         
     print_model_description(model)
         
@@ -139,7 +142,7 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True):
+def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False):
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
         model, objective = prep_lfads(input_dims = input_dims,
@@ -157,7 +160,8 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       dtype=train_dl.dataset.tensors[0].dtype,
                                       dt= data_dict['dt'],
                                       multidevice=multidevice,
-                                      mse=mse)
+                                      mse=mse,
+                                      attention=attention)
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -229,7 +233,7 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True):
+def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False):
     from objective import LFADS_Loss, LogLikelihoodGaussian
     from lfads import LFADS_Ecog_SingleSession_Net
 
@@ -241,6 +245,7 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
                                     u_latent_size        = hyperparams['model']['u_latent_size'],
                                     controller_size      = hyperparams['model']['controller_size'],
                                     generator_size       = hyperparams['model']['generator_size'],
+                                    attention            = attention,
                                     prior                = hyperparams['model']['prior'],
                                     clip_val             = hyperparams['model']['clip_val'],
                                     dropout              = hyperparams['model']['dropout'],
@@ -372,6 +377,15 @@ class EcogTensorDataset(Dataset):
 
     def __len__(self):
         return self.tensors[0].size(0)
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+# class EcogPredictionTensorDataset(Dataset):
+
+#     def __init(self, *tensors, device='cpu'):
+        
+
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
     
