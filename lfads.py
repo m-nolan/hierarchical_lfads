@@ -44,13 +44,14 @@ class LFADS_Net(nn.Module):
                  g_encoder_size  = 64, c_encoder_size = 64,
                  g_latent_size   = 64, u_latent_size  = 1,
                  controller_size = 64, generator_size = 64,
+                 attn = False,
                  prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
                                   'var'  : {'value': 0.1, 'learnable' : False}},
                           'u'  : {'mean' : {'value': 0.0, 'learnable' : False},
                                   'var'  : {'value': 0.1, 'learnable' : True},
                                   'tau'  : {'value': 10,  'learnable' : True}}},
                  clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
-                 do_normalize_factors=True, factor_bias = False, attn = False, device='cpu'):
+                 do_normalize_factors=True, factor_bias = False, device='cpu'):
         
         super(LFADS_Net, self).__init__()
         
@@ -63,8 +64,6 @@ class LFADS_Net(nn.Module):
         self.controller_size      = controller_size
         self.generator_size       = generator_size
         self.factor_size          = factor_size
-        self.attention_size = torch.nan # how big is this supposed to be? this will be a sum of defined layer sizes.
-
         
         self.clip_val             = clip_val
         self.max_norm             = max_norm
@@ -97,6 +96,7 @@ class LFADS_Net(nn.Module):
             self.generator  = LFADS_GeneratorAttnCell(input_size     = self.u_latent_size,
                                                 generator_size = self.generator_size,
                                                 factor_size    = self.factor_size,
+                                                encoder_size   = self.g_encoder_size,
                                                 clip_val       = self.clip_val,
                                                 factor_bias    = self.factor_bias,
                                                 dropout        = dropout)
@@ -121,10 +121,10 @@ class LFADS_Net(nn.Module):
             self.controller_init = nn.Parameter(torch.zeros(self.controller_size))
         
         # Initialize priors
-        self.register_buffer('g_prior_mean',torch.tensor(0.0))
-        self.register_buffer('g_prior_logvar',torch.tensor(0.1))
-        self.register_buffer('g_posterior_mean',torch.tensor(0.0))
-        self.register_buffer('g_posterior_logvar',torch.tensor(0.1)) # these have actual values?
+        self.register_buffer('g_prior_mean',None)
+        self.register_buffer('g_prior_logvar',None)
+        self.register_buffer('g_posterior_mean',None)
+        self.register_buffer('g_posterior_logvar',None) # these become large arrays and should not be singleton values.
         
         self.g_prior_mean = torch.ones(self.g_latent_size, device=device) * prior['g0']['mean']['value']
         
@@ -163,7 +163,6 @@ class LFADS_Net(nn.Module):
         
         # Encode input and calculate and calculate generator initial condition variational posterior distribution
         self.g_posterior_mean, self.g_posterior_logvar, out_gru_g_enc, out_gru_c_enc = self.encoder(input, (g_encoder_state, c_encoder_state))
-        
 
         # Sample generator state
         generator_state = self.fc_genstate(self.sample_gaussian(self.g_posterior_mean, self.g_posterior_logvar))
@@ -203,7 +202,10 @@ class LFADS_Net(nn.Module):
                 gen_inputs = None
                 
             # Update generator and factor state
-            generator_state, factor_state = self.generator(generator_input, generator_state)
+            if self.attn:
+                generator_state, factor_state = self.generator(generator_input, generator_state, out_gru_g_enc)
+            else:
+                generator_state, factor_state = self.generator(generator_input, generator_state)
             # Store factor state
             factors = torch.cat((factors, factor_state.unsqueeze(0)), dim=0)
             
@@ -412,20 +414,21 @@ class LFADS_Ecog_SingleSession_Net(LFADS_Net):
                  g_encoder_size  = 64, c_encoder_size = 64,
                  g_latent_size   = 64, u_latent_size  = 1,
                  controller_size = 64, generator_size = 64,
+                 attention = False,
                  prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
                                   'var'  : {'value': 0.1, 'learnable' : False}},
                           'u'  : {'mean' : {'value': 0.0, 'learnable' : False},
                                   'var'  : {'value': 0.1, 'learnable' : True},
                                   'tau'  : {'value': 10,  'learnable' : True}}},
                  clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
-                 do_normalize_factors=True, factor_bias = False, attn=True, device='cpu'):
+                 do_normalize_factors=True, factor_bias = False, device='cpu'):
 
         super(LFADS_Ecog_SingleSession_Net, self).__init__(input_size = input_size, factor_size = factor_size, prior = prior,
                                                       g_encoder_size   = g_encoder_size, c_encoder_size = c_encoder_size,
                                                       g_latent_size    = g_latent_size, u_latent_size = u_latent_size,
                                                       controller_size  = controller_size, generator_size = generator_size,
                                                       clip_val=clip_val, dropout=dropout, max_norm = max_norm, deep_freeze = deep_freeze,
-                                                      do_normalize_factors=do_normalize_factors, factor_bias = factor_bias, attn=attn, device=device)
+                                                      do_normalize_factors=do_normalize_factors, factor_bias = factor_bias, attn=attention, device=device)
         
         self.fc_logrates = nn.Linear(in_features= self.factor_size, out_features= self.input_size)
         
@@ -593,32 +596,44 @@ class LFADS_GeneratorCell(nn.Module):
         
         return generator_state, factor_state
 
+# don't use this.
 class LFADS_GeneratorAttnCell(nn.Module):
 
-    def __init__(self, input_size, generator_size, factor_size, dropout = 0.0, clip_val = 5.0, factor_bias = False):
+    def __init__(self, input_size, generator_size, factor_size, encoder_size, dropout = 0.0, clip_val = 5.0, factor_bias = False):
         super(LFADS_GeneratorAttnCell, self).__init__()
         self.input_size = input_size
         self.generator_size = generator_size
         self.factor_size = factor_size
         self.dropout = nn.Dropout(dropout)
         self.clip_val = clip_val
-        self.gru_generator = LFADS_GenGRUCell(input=input_size, hidden_size=generator_size)
+        self.gru_generator = LFADS_GenGRUCell(input_size=input_size, hidden_size=generator_size)
         self.fc_factors = nn.Linear(in_features=generator_size, out_features=factor_size, bias=factor_bias)
-        self.attn = nn.Linear(in_features=input_size+generator_size, out_features=generator_size) # the new thing
-        self.attn_combine = nn.Linear(in_features=input_size+generator_size,out_features=generator_size)
+        self.attn_alpha = nn.Linear(in_features=generator_size+2*encoder_size, out_features=1) # the new thing
+        self.attn_out = nn.Linear(in_features=generator_size+2*encoder_size, out_features=generator_size)
+
+        # self.attn_combine = nn.Linear(in_features=input_size+generator_size,out_features=generator_size)
 
     def forward(self, input, hidden, encoder_outputs):
-
-        # attention mapping
-        breakpoint()
-        attn_weights = F.softmax(self.attn(torch.cat((input[0],hidden[0]),1)),dim=1)
-        attn_applied = torch.bmm(attn_weights.unsqueeze(0), encoder_outputs.unsqueeze(0))
-        input = F.relu(self.attn_combine(torch.cat((input[0],attn_applied[0]), 1)).unsqueeze(0))
+        '''
+            One pass through the generator loop.
+        '''
+        # # attention mapping
+        # attn_weights = F.softmax(self.attn(torch.cat((input,hidden),1)),dim=1)
+        # breakpoint()
+        # attn_applied = torch.bmm(attn_weights.unsqueeze(0), encoder_outputs.unsqueeze(0))
+        # input = nn.Softmax(self.attn_combine(torch.cat((input[0],attn_applied[0]), 1)).unsqueeze(0))
 
         generator_state = hidden
 
         generator_state = self.gru_generator(input, generator_state).clamp(min=-self.clip_val, max=self.clip_val)
-        factor_state    = self.fc_factors(self.dropout(generator_state))
+        # concatenate generator output to hidden states, project to obtain attention weights
+        attn_w = torch.zeros((encoder_outputs.shape[0],encoder_outputs.shape[1])).to(generator_state.device) # time x batch
+        for idx in range(encoder_outputs.shape[0]): # slow way, dumb way. Figure out how to broadcast this
+            attn_w[idx] = torch.relu(self.attn_alpha(torch.cat((generator_state,encoder_outputs.permute(1,0,2)[:,idx,:]),dim=-1))).squeeze()
+        attn_w = torch.softmax(attn_w,dim=0) # softmax across time
+        # take weighted sum of encoder states, augment generator state (query), output to generator_state size
+        attn_out = torch.tanh(self.attn_out(torch.cat((generator_state,torch.bmm(attn_w.T.unsqueeze(1),encoder_outputs.permute(1,0,2)).squeeze(1)),dim=-1)))
+        factor_state    = self.fc_factors(self.dropout(attn_out))
 
         return generator_state, factor_state
     
