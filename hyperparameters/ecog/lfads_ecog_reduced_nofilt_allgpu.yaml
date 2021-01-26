@@ -30,11 +30,11 @@ objective:
 model:
   factor_size: 64
   g_encoder_size: 1024
-  c_encoder_size: 0
+  c_encoder_size: 1024
   g_latent_size: 1024
   u_latent_size: 0
   controller_size: 0
-  generator_size: 1024
+  generator_size: 0
   
   prior:
     g0: 
