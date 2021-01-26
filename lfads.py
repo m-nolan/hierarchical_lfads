@@ -6,6 +6,8 @@ from rnn import LFADS_GenGRUCell
 from math import log
 import pdb
 import time
+# for debug
+# from tqdm import tqdm
 
 class LFADS_Net(nn.Module):
     '''
