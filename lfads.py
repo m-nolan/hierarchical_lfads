@@ -629,12 +629,20 @@ class LFADS_GeneratorAttnCell(nn.Module):
 
         generator_state = self.gru_generator(input, generator_state).clamp(min=-self.clip_val, max=self.clip_val)
         # concatenate generator output to hidden states, project to obtain attention weights
-        attn_w = torch.zeros((encoder_outputs.shape[0],encoder_outputs.shape[1])).to(generator_state.device) # time x batch
-        for idx in range(encoder_outputs.shape[0]): # slow way, dumb way. Figure out how to broadcast this
-            attn_w[idx] = torch.relu(self.attn_alpha(torch.cat((generator_state,encoder_outputs.permute(1,0,2)[:,idx,:]),dim=-1))).squeeze()
+        # attn_w = torch.zeros((encoder_outputs.shape[0],encoder_outputs.shape[1])).to(generator_state.device) # time x batch
+        # for idx in range(encoder_outputs.shape[0]): # slow way, dumb way. Figure out how to broadcast this
+        #     attn_w[idx] = torch.relu(self.attn_alpha(torch.cat((generator_state,encoder_outputs.permute(1,0,2)[:,idx,:]),dim=-1))).squeeze()
+        attn_w = torch.relu(self.attn_alpha(
+            torch.cat(
+                (
+                generator_state.unsqueeze(1).repeat(1,encoder_outputs.shape[0],1), # repeat the generator output and tack it onto the encoder sequence at each point
+                encoder_outputs.permute(1,0,2)
+                ),
+                dim=-1)
+            ))
         attn_w = torch.softmax(attn_w,dim=0) # softmax across time
         # take weighted sum of encoder states, augment generator state (query), output to generator_state size
-        attn_out = torch.tanh(self.attn_out(torch.cat((generator_state,torch.bmm(attn_w.T.unsqueeze(1),encoder_outputs.permute(1,0,2)).squeeze(1)),dim=-1)))
+        attn_out = torch.tanh(self.attn_out(torch.cat((generator_state,torch.bmm(attn_w.permute(0,2,1),encoder_outputs.permute(1,0,2)).squeeze(1)),dim=-1)))
         factor_state    = self.fc_factors(self.dropout(attn_out))
 
         return generator_state, factor_state
