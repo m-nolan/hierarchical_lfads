@@ -73,7 +73,11 @@ def main():
     orion_hp_string, hyperparams = prep_orion(args, hyperparams)
 
     save_loc, hyperparams = generate_save_loc(args, hyperparams, orion_hp_string)
-    save_loc = save_loc[:-1] + 'varstd' + os.sep
+    save_loc = save_loc[:-1] + 'varstd'
+    if args.attention:
+        save_loc = save_loc + '_attn' + os.sep
+    else:
+        save_loc = save_loc + os.sep
     
     save_parameters(save_loc, hyperparams)
     
