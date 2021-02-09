@@ -610,8 +610,8 @@ class LFADS_GeneratorAttnCell(nn.Module):
         self.clip_val = clip_val
         self.gru_generator = LFADS_GenGRUCell(input_size=input_size, hidden_size=generator_size)
         self.fc_factors = nn.Linear(in_features=generator_size, out_features=factor_size, bias=factor_bias)
-        self.attn_alpha = nn.Linear(in_features=generator_size+2*encoder_size, out_features=encoder_size*2) # the new thing
-        self.attn_out = nn.Linear(in_features=generator_size+2*encoder_size, out_features=generator_size)
+        self.attn_alpha = nn.Linear(in_features=generator_size+2*encoder_size, out_features=encoder_size*2, bias=False) # the new thing
+        self.attn_out = nn.Linear(in_features=generator_size+2*encoder_size, out_features=generator_size, bias=False)
 
         # self.attn_combine = nn.Linear(in_features=input_size+generator_size,out_features=generator_size)
 
