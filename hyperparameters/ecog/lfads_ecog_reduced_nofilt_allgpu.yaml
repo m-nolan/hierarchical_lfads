@@ -15,7 +15,7 @@ objective:
   kl:
     weight : 0.0
     min: 0.0
-    max: 1.0
+    max: 0.1
     schedule_dur: 1600
     schedule_start: 0
   l2:
@@ -30,11 +30,11 @@ objective:
 model:
   factor_size: 64
   g_encoder_size: 1024
-  c_encoder_size: 1024
+  c_encoder_size: 0
   g_latent_size: 1024
   u_latent_size: 0
   controller_size: 0
-  generator_size: 0
+  generator_size: 1024
   
   prior:
     g0: 
@@ -42,7 +42,7 @@ model:
         value: 0.0
         learnable: true
       var: 
-        value: 0.1
+        value: 10.0
         learnable: true
     u:
       mean:
