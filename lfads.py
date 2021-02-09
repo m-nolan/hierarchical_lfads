@@ -95,10 +95,10 @@ class LFADS_Net(nn.Module):
         
         # Initialize generator RNN
         if self.attn:
-            self.generator  = LFADS_GeneratorAttnCell(input_size     = self.u_latent_size,
+            self.generator  = LFADS_Generator_SourceAttnCell(input_size     = self.u_latent_size,
                                                 generator_size = self.generator_size,
                                                 factor_size    = self.factor_size,
-                                                encoder_size   = self.g_encoder_size,
+                                                source_size    = self.input_size,
                                                 clip_val       = self.clip_val,
                                                 factor_bias    = self.factor_bias,
                                                 dropout        = dropout)
@@ -205,7 +205,7 @@ class LFADS_Net(nn.Module):
                 
             # Update generator and factor state
             if self.attn:
-                generator_state, factor_state = self.generator(generator_input, generator_state, out_gru_g_enc)
+                generator_state, factor_state = self.generator(generator_input, generator_state, input)
             else:
                 generator_state, factor_state = self.generator(generator_input, generator_state)
             # Store factor state
@@ -598,11 +598,57 @@ class LFADS_GeneratorCell(nn.Module):
         
         return generator_state, factor_state
 
-# don't use this.
-class LFADS_GeneratorAttnCell(nn.Module):
+
+class LFADS_Generator_SourceAttnCell(nn.Module):
+
+    def __init__(self, input_size, generator_size, factor_size, source_size, dropout = 0.0, clip_val = 5.0, factor_bias = False):
+        super(LFADS_Generator_SourceAttnCell, self).__init__()
+        self.input_size = input_size
+        self.generator_size = generator_size
+        self.factor_size = factor_size
+        self.dropout = nn.Dropout(dropout)
+        self.clip_val = clip_val
+        self.gru_generator = LFADS_GenGRUCell(input_size=input_size, hidden_size=generator_size)
+        self.fc_factors = nn.Linear(in_features=generator_size, out_features=factor_size, bias=factor_bias)
+        self.attn_alpha = nn.Linear(in_features=generator_size+source_size, out_features=source_size, bias=False) # the new thing
+        self.attn_out = nn.Linear(in_features=generator_size+source_size, out_features=generator_size, bias=False)
+
+    def forward(self, input, hidden, src):
+        '''
+            One pass through the generator loop.
+        '''
+        # # attention mapping
+        # attn_weights = F.softmax(self.attn(torch.cat((input,hidden),1)),dim=1)
+        # breakpoint()
+        # attn_applied = torch.bmm(attn_weights.unsqueeze(0), encoder_outputs.unsqueeze(0))
+        # input = nn.Softmax(self.attn_combine(torch.cat((input[0],attn_applied[0]), 1)).unsqueeze(0))
+
+        generator_state = hidden
+
+        generator_state = self.gru_generator(input, generator_state).clamp(min=-self.clip_val, max=self.clip_val)
+        # concatenate generator output to hidden states, project to obtain attention weights
+        # attn_w = torch.zeros((encoder_outputs.shape[0],encoder_outputs.shape[1])).to(generator_state.device) # time x batch
+        # for idx in range(encoder_outputs.shape[0]): # slow way, dumb way. Figure out how to broadcast this
+        #     attn_w[idx] = torch.relu(self.attn_alpha(torch.cat((generator_state,encoder_outputs.permute(1,0,2)[:,idx,:]),dim=-1))).squeeze()
+        attn_w = torch.relu(self.attn_alpha(
+            torch.cat(
+                (
+                generator_state.unsqueeze(1).repeat(1,src.shape[0],1), # repeat the generator output and tack it onto the encoder sequence at each point
+                src.permute(1,0,2)
+                ),
+                dim=-1)
+            ))
+        attn_w = torch.softmax(attn_w,dim=1) # softmax across time
+        # take weighted sum of encoder states, augment generator state (query), output to generator_state size
+        attn_out = torch.tanh(self.attn_out(torch.cat((generator_state,(src.permute(1,0,2)*attn_w).sum(dim=1)),dim=-1)))
+        factor_state    = self.fc_factors(self.dropout(attn_out))
+
+        return generator_state, factor_state
+
+class LFADS_Generator_EncoderAttnCell(nn.Module):
 
     def __init__(self, input_size, generator_size, factor_size, encoder_size, dropout = 0.0, clip_val = 5.0, factor_bias = False):
-        super(LFADS_GeneratorAttnCell, self).__init__()
+        super(LFADS_Generator_EncoderAttnCell, self).__init__()
         self.input_size = input_size
         self.generator_size = generator_size
         self.factor_size = factor_size
@@ -640,7 +686,7 @@ class LFADS_GeneratorAttnCell(nn.Module):
                 ),
                 dim=-1)
             ))
-        attn_w = torch.softmax(attn_w,dim=0) # softmax across time
+        attn_w = torch.softmax(attn_w,dim=1) # softmax across time, dim 1
         # take weighted sum of encoder states, augment generator state (query), output to generator_state size
         attn_out = torch.tanh(self.attn_out(torch.cat((generator_state,(encoder_outputs.permute(1,0,2)*attn_w).sum(dim=1)),dim=-1)))
         factor_state    = self.fc_factors(self.dropout(attn_out))
