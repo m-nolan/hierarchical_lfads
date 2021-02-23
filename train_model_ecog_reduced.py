@@ -105,7 +105,7 @@ def main():
                                                                multidevice = args.multidevice,
                                                                mse = mse,
                                                                attention = args.attention,
-                                                               transforms = transforms)
+                                                               transform = transforms)
         
     print_model_description(model)
     
