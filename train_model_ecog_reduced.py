@@ -20,8 +20,6 @@ from scheduler import LFADS_Scheduler
 from utils import read_data, load_parameters, save_parameters
 from plotter import Plotter
 
-import pdb
-
 parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--model', type=str)
 parser.add_argument('-d', '--data_path', type=str)
@@ -48,6 +46,7 @@ parser.add_argument('--l2_gen_scale', type=float, default=None)
 parser.add_argument('--l2_con_scale', type=float, default=None)
 parser.add_argument('--log10_l2_gen_scale', type=float, default=None)
 parser.add_argument('--log10_l2_con_scale', type=float, default=None)
+parser.add_argument('--drop_ratio', type=float, default=0.0)
 
 parser.add_argument('--seq_len', type=int, default=50)
 parser.add_argument('--ch_idx', nargs='+', type=int, default=None)
@@ -78,6 +77,8 @@ def main():
         save_loc = save_loc + '_attn' + os.sep
     else:
         save_loc = save_loc + os.sep
+    if args.drop_ratio > 0:
+        save_loc = save_loc + f'_droprat{args.drop_ratio}' + os.sep
     
     save_parameters(save_loc, hyperparams)
     
@@ -87,6 +88,12 @@ def main():
     data_dict   = read_data(args.data_path)
 
     mse = args.loss == 'mse'
+    
+    if args.drop_ratio > 0:
+        transforms = trf.Compose([DropChannels(drop_ratio=args.drop_ratio)])
+    else:
+        transforms = None
+
     train_dl, valid_dl, plotter, model, objective = prep_model(model_name  = args.model,
                                                                data_dict   = data_dict,
                                                                data_suffix = args.data_suffix,
@@ -97,11 +104,10 @@ def main():
                                                                hyperparams = hyperparams,
                                                                multidevice = args.multidevice,
                                                                mse = mse,
-                                                               attention = args.attention)
+                                                               attention = args.attention,
+                                                               transforms = transforms)
         
     print_model_description(model)
-        
-    transforms = trf.Compose([])
     
     optimizer, scheduler = prep_optimizer(model, hyperparams)
         
@@ -146,7 +152,7 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False):
+def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None):
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
         model, objective = prep_lfads(input_dims = input_dims,
@@ -157,7 +163,7 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       )
 
     if model_name == 'lfads_ecog':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx)
+        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
         model, objective = prep_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
@@ -371,29 +377,47 @@ class EcogTensorDataset(Dataset):
         *tensors (Tensor): tensors that have the same size of the first dimension.
     """
 
-    def __init__(self, *tensors, device='cpu'):
+    def __init__(self, *tensors, device='cpu', transform=None):
         assert all(tensors[0].size(0) == tensor.size(0) for tensor in tensors)
         self.tensors = tensors
         self.device = device
+        self.transform = transform
 
     def __getitem__(self, index):
-        return tuple(tensor[index].to(self.device) for tensor in self.tensors)
+        sample = tuple(tensor[index].to(self.device) for tensor in self.tensors)
+        if self.transform:
+            sample = tuple(self.transform(tensor) for tensor in self.tensors)
+        return sample
 
     def __len__(self):
         return self.tensors[0].size(0)
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
+# data dropout transforms
+class DropChannels(object):
+    '''
+        Dataset transform to randomly drop channels (i.e. set all values to zero) within a sample.
+        The number of dropped channels is determined by the drop ratio:
+            n_drop = floor(drop_ratio*n_ch)
+        Channel dimension is assumed to be the last indexed tensor dimension. This may need to be
+        adjusted for multidimensional time series data, e.g. spectrograms.
+    '''
+    def __init__(self,drop_ratio=0.1):
+        self.drop_ratio = drop_ratio
 
-# class EcogPredictionTensorDataset(Dataset):
-
-#     def __init(self, *tensors, device='cpu'):
+    def __call__(self,sample):
+        _, n_ch = sample.shape
+        n_ch_drop = floor(self.drop_ratio*n_ch)
+        drop_ch_idx = torch.randperm(n_ch)[:n_ch_drop]
+        sample[:,drop_ch_idx] = 0.
+        return sample
         
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
     
-def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=None):
+def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=None, transform=None):
     if seq_len is None:
         seq_len = data_dict[f'train_{data_suffix}'].shape[1]
     if ch_idx is None:
@@ -404,8 +428,8 @@ def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=N
     
     num_trials, num_steps, input_size = train_data.shape
     
-    train_ds    = EcogTensorDataset(train_data,device=device)
-    valid_ds    = EcogTensorDataset(valid_data,device=device)
+    train_ds    = EcogTensorDataset(train_data,device=device,transform=transform)
+    valid_ds    = EcogTensorDataset(valid_data,device=device,transform=transform)
     
     train_dl    = torch.utils.data.DataLoader(train_ds, batch_size = batch_size, shuffle=True)
     valid_dl    = torch.utils.data.DataLoader(valid_ds, batch_size = batch_size)
