@@ -15,7 +15,7 @@ objective:
   kl:
     weight : 0.0
     min: 0.0
-    max: 1.0
+    max: 0.1
     schedule_dur: 1600
     schedule_start: 0
   l2:
@@ -42,7 +42,7 @@ model:
         value: 0.0
         learnable: true
       var: 
-        value: 0.1
+        value: 10.0
         learnable: true
     u:
       mean:
