@@ -20,6 +20,8 @@ from scheduler import LFADS_Scheduler
 from utils import read_data, load_parameters, save_parameters
 from plotter import Plotter
 
+from math import floor
+
 parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--model', type=str)
 parser.add_argument('-d', '--data_path', type=str)
@@ -105,7 +107,7 @@ def main():
                                                                multidevice = args.multidevice,
                                                                mse = mse,
                                                                attention = args.attention,
-                                                               transforms = transforms)
+                                                               transform = transforms)
         
     print_model_description(model)
     
@@ -386,7 +388,7 @@ class EcogTensorDataset(Dataset):
     def __getitem__(self, index):
         sample = tuple(tensor[index].to(self.device) for tensor in self.tensors)
         if self.transform:
-            sample = tuple(self.transform(tensor) for tensor in self.tensors)
+            sample = tuple(self.transform(s) for s in sample)
         return sample
 
     def __len__(self):
@@ -407,7 +409,7 @@ class DropChannels(object):
         self.drop_ratio = drop_ratio
 
     def __call__(self,sample):
-        _, n_ch = sample.shape
+        n_ch = sample.shape[-1]
         n_ch_drop = floor(self.drop_ratio*n_ch)
         drop_ch_idx = torch.randperm(n_ch)[:n_ch_drop]
         sample[:,drop_ch_idx] = 0.
