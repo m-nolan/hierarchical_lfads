@@ -165,6 +165,134 @@ class Conv3d_LFADS_Net(nn.Module):
         
     def change_parameter_grad_status(self, step, optimizer, scheduler, loading_checkpoint=False):
         return optimizer, scheduler
+    
+class Conv1d_LFADS_Net(nn.Module):
+    def __init__(self, input_dims = 50, channel_dims = (5, 10),
+                 conv_dense_size = 64, factor_size = 64,
+                 g_encoder_size  = 64, c_encoder_size = 0,
+                 g_latent_size = 64, u_latent_size = 0,
+                 controller_size = 0, generator_size = 64,
+                 prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
+                                  'var'  : {'value': 0.1, 'learnable' : False}}},
+                 clip_val = 5.0, max_norm = 200, lfads_dropout = 0.0, conv_dropout = 0.0,
+                 do_normalize_factors = True, factor_bias = False, device = 'cpu'):
+        super(Conv1d_LFADS_Net, self).__init__()
+        
+        self.factor_size = factor_size,
+        self.g_encoder_size = g_encoder_size,
+        self.c_encoder_size = c_encoder_size,
+        self.g_latent_size = g_latent_size,
+        self.u_latent_size = u_latent_size
+        self.controller_size = controller_size
+        self.generator_size = generator_size
+        self.clip_val = clip_val
+        self.max_norm = max_norm
+        self.do_normalize_factors = do_normalize_factors
+        self.factor_bias = factor_bias
+        
+        self.device = device
+        self.input_dims = input_dims
+        self.channel_dims = (1,) + channel_dims
+        self.conv_layers = nn.ModuleList()
+        self.conv_dense_layers = conv_dense_size
+        
+        layer_dims = self.input_dims
+        for n in range(1, len(self.channel_dims)):
+            self.conv_layers.add_module('{}{}'.format('block', n),
+                                       Conv1d_Block_1step(input_dims = layer_dims,
+                                                          in_f = self.channel_dims[n-1],
+                                                          out_f = self.channel_dims[n]))
+            layer_dims = getattr(self.conv_layers, '{}{}'.format('block', n)).get_output_dims()
+            
+        self.deconv_layers = nn.ModuleList()
+        for n in reversed(range(1, len(self.channel_dims))):
+            self.deconv_layers.add_module('{}{}'.format('block',n),
+                                         ConvTranspose1d_Block_1step(in_f = self.channel_dims[n],
+                                                                     out_f = self.channel_dims[n-1]))
+        
+        self.conv_output_size = int(torch._np.prod(layer_dims[1:]) * layer.channel_dims[-1]) # this isn't right
+        self.conv_dense_size = self.conv_dense_size
+        self.conv_dropout = nn.Dropout(conv_dropout)
+        self.conv_dense_1 = nn.Linear(in_features = self.conv_output_size,
+                                      out_features = self.conv_dense_size)
+        self.conv_dense_2 = nn.Linear(in_features = self.factor_size,
+                                      out_features = self.conv_output_size)
+        
+        print(self.device)
+        print(torch.cuda.device_cout())
+        # note the change to an ECoG LFADS net!
+        self.lfads = LFADS_Net(input_size = self.conv_dense_size,
+                               g_encoder_size = self.g_encoder_size,
+                               c_encoder_size = self.c_encoder_size,
+                               g_latent_size = self.g_latent_size,
+                               u_latent_size = self.u_latent_size,
+                               controller_size = self.controller_size,
+                               generator_size = self.generator_size,
+                               factor_size = self.factor_size,
+                               prior = prior,
+                               clip_val = self.clip_val,
+                               dropout = lfads_dropout,
+                               max_norm = self.max_norm,
+                               do_normalize_factors = self.do_normalize_factors,
+                               factor_bias = self.factor_bias,
+                               device = self.device)
+        
+        self.register_buffer('g_posterior_mean', None)
+        self.register_buffer('g_posterior_logvar', None)
+        self.register_buffer('g_prior_mean', self.lfads.g_prior.mean)
+        self.register_buffer('g_prior_logvar', self.lfads.g_prior_logvar)
+        
+    def forward(self, x): 
+        # note that
+        if len(x.shape) == 3:
+            x = x.unsqueeze(1)
+        assert len(x.shape) == 4, "input must be 4d"
+        batch_size, num_ch, seq_len, num_elec = x.shape
+        # x is the [n_batch, n_ch, n_time, n_elec] ECoG array with added dummy channel
+        
+        # conv block
+        Ind = list()
+        conv_tic = time.time()
+        for n, layer in enumerate(self.conv_layers):
+            x, ind1 = layer(x)
+            Ind.append(ind1)
+        conv_toc = time.time()
+        
+        num_out_ch = x.shape[1]
+        seq_out_len = x.shape[2]
+        x = x.permute(0,2,1,3)
+        x = x.view(batch_size,num_out_ch*num_elec,seq_out_len).contiguous()
+        x = x.permute(0,2,1)
+        x = self.conv_dense_1(x)
+        
+        # LFADS block
+        lfads_tic = time.time()
+        factors, gen_inputs = self.lfads(x)
+        lfads_toc = time.time()
+        print(f'conv t: {conv_toc - conv_tic}\tlfads t: {lfads_toc-lfads_tic}')
+        x = factors
+        x = self.conv_dense_2(x)
+        
+        # deconv block
+        x = x.reshape(batch_size,seq_out_len,num_out_ch,num_elec)
+        x = x.permute(0,2,1,3)
+        for layer, ind in list(zip(self.deconv_layers, reversed(Ind))):
+            x = layer(x, ind)
+        x = x.squeeze(1) # channel size should be 1 at this point
+        
+        g_posterior = dict()
+        g_posterior['mean'] = self.lfads.g_posterior_mean
+        g_posterior['logvar'] = self.lfads.g_posterior_logvar
+        
+        recon = {'data' : x}
+
+        return recon, (factors, gen_inputs)
+    
+    def normalize_factors(self):
+        self.lfads.normalize_factors()
+        
+    def change_parameter_grad_status(self, step, optimizer, scheduler, loading_checkpoint=False):
+        return optimizer, scheduler
 
 class _ConvNd_Block(nn.ModuleList):
     def __init__(self, input_dims):
@@ -256,6 +384,28 @@ class Conv3d_Block_1step(_ConvNd_Block):
                                               padding=(0, 0, 0),
                                               dilation=(1, 1, 1),
                                               return_indices= True))
+        
+class Conv1d_Block_1step(_ConvNd_Block):
+    def __init__(self, in_f, out_f,
+                kernel_size = 15, #?
+                dilation = 1,
+                padding = 1,
+                stride = 1,
+                pool_size = 1,
+                input_dims = 50):
+        super(Conv1d_Block_1step, self).__init__(input_dims)
+        
+        self.add_module('conv1', nn.Conv1d(in_f, out_f,
+                                          kernel_size = kernel_size,
+                                          padding = padding,
+                                          dilation = dilation,
+                                          stride = stride))
+        self.add_module('relu1', nn.ReLU())
+        self.add_module('pool1', nn.MaxPool1d(kernel_size = pool_size,
+                                             stride = pool_size,
+                                             padding = 0,
+                                             dilation = 1,
+                                             return_indices = True))
     
 class _ConvTransposeNd_Block(nn.ModuleList):
     def __init__(self):
@@ -279,4 +429,16 @@ class ConvTranspose3d_Block_1step(_ConvTransposeNd_Block):
                                           kernel_size= 3,
                                           padding= 1, 
                                           dilation= (1,1,1)))
+        self.add_module('relu1', nn.ReLU())
+
+class ConvTranspose1d_Block_1step(_ConvTransposeNd_Block):
+    def __init__(self, in_f, out_f):
+        super(ConvTranspose1d_Block_1step, self).__init__()
+        
+        self.add_module('unpool1', nn.MaxUnpool1d(kernel_size=1))
+        self.add_module('deconv1', nn.ConvTranspose1d(in_channel = in_f,
+                                                     out_channels = out_f,
+                                                     kernel_size = 3,
+                                                     padding = 1,
+                                                     dilation = 1)
         self.add_module('relu1', nn.ReLU())
