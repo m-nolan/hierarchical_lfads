@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.parallel.data_parallel import DataParallel
 import pdb
 from math import log
@@ -91,18 +92,28 @@ class SVLAE_Loss(Base_Loss):
 
 class LFADS_Loss(Base_Loss):
     def __init__(self, loglikelihood,
+                 use_fdl = False,
                  loss_weight_dict= {'kl' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0},
                                     'l2' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0}},
                  l2_con_scale=0.0, l2_gen_scale=0.0):
         
         super(LFADS_Loss, self).__init__(loss_weight_dict=loss_weight_dict, l2_con_scale=l2_con_scale, l2_gen_scale=l2_gen_scale)
         self.loglikelihood = loglikelihood
+        self.use_fdl = use_fdl
+        
+    def freq_domain_loss(self, x_orig, x_recon):
+        # data is [n_batch, n_time, n_ch]
+        x_orig_lsp = torch.log10(torch.abs(torch.fft.rfft(x_orig,dim=1)))
+        x_recon_lsp = torch.log10(torch.abs(torch.fft.rfft(x_recon,dim=1)))
+        return F.mse_loss(x_orig_lsp,x_recon_lsp,reduction=None)
         
     def forward(self, x_orig, x_recon, model):
         kl_weight = self.loss_weights['kl']['weight']
         l2_weight = self.loss_weights['l2']['weight']
         
         recon_loss = -self.loglikelihood(x_orig, x_recon['data'])
+        
+        recon_fdl = self.freq_domain_loss(x_orig,x_recon['data'])
 
         # access model methods/loss terms instead of DataParallel methods
         if isinstance(model,DataParallel):
@@ -120,6 +131,9 @@ class LFADS_Loss(Base_Loss):
                      'kl'    : float(kl_loss.data),
                      'l2'    : float(l2_loss.data),
                      'total' : float(loss.data)}
+        if self.use_fdl:
+            loss += recon_fdl
+            loss_dict['recon_fdl'] = float(recon_loss.data)
 
         if torch.isinf(loss):
             import matplotlib.pyplot as plt
@@ -130,8 +144,16 @@ class LFADS_Loss(Base_Loss):
 class Conv_LFADS_Loss(LFADS_Loss):
     
     def __init__(self, loglikelihood,
-                 loss_weight_dict= {'kl' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0},
-                                    'l2' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0}},
+                 loss_weight_dict= {'kl' : {'weight' : 0.0, 
+                                            'schedule_dur' : 2000, 
+                                            'schedule_start' : 0, 
+                                            'max' : 1.0, 
+                                            'min' : 0.0},
+                                    'l2' : {'weight' : 0.0, 
+                                            'schedule_dur' : 2000, 
+                                            'schedule_start' : 0, 
+                                            'max' : 1.0, 
+                                            'min' : 0.0}},
                  l2_con_scale=0.0, l2_gen_scale=0.0):
         
         super(Conv_LFADS_Loss, self).__init__(loglikelihood=loglikelihood,
@@ -158,6 +180,54 @@ class Conv_LFADS_Loss(LFADS_Loss):
                      'kl'    : float(kl_loss.data),
                      'l2'    : float(l2_loss.data),
                      'total' : float(loss.data)}
+
+        return loss, loss_dict
+    
+class Conv_LFADS_Ecog_Loss(LFADS_Loss):
+    
+    def __init__(self, loglikelihood,
+                 use_fdl = False,
+                 loss_weight_dict= {'kl' : {'weight' : 0.0, 
+                                            'schedule_dur' : 2000, 
+                                            'schedule_start' : 0, 
+                                            'max' : 1.0, 
+                                            'min' : 0.0},
+                                    'l2' : {'weight' : 0.0, 
+                                            'schedule_dur' : 2000, 
+                                            'schedule_start' : 0, 
+                                            'max' : 1.0, 
+                                            'min' : 0.0}},
+                 l2_con_scale=0.0, l2_gen_scale=0.0):
+        
+        super(Conv_LFADS_Loss, self).__init__(loglikelihood=loglikelihood,
+                                              loss_weight_dict=loss_weight_dict,
+                                              l2_con_scale=l2_con_scale,
+                                              l2_gen_scale=l2_gen_scale)
+        
+    def forward(self, x_orig, x_recon, model):
+        kl_weight = self.loss_weights['kl']['weight']
+        l2_weight = self.loss_weights['l2']['weight']
+
+        recon_loss = -self.loglikelihood(x_orig, x_recon['data'])
+        
+        recon_fdl = self.freq_domain_loss(x_orig, x_recon['data'])
+        
+        kl_loss = model.lfads.kl_div()
+        
+        l2_loss = 0.5 * l2_weight * self.l2_gen_scale * model.lfads.generator.gru_generator.hidden_weight_l2_norm()
+    
+        if hasattr(model.lfads, 'controller'):            
+            l2_loss += 0.5 * l2_weight * self.l2_con_scale * model.lfads.controller.gru_controller.hidden_weight_l2_norm()
+            
+        loss = recon_loss + recon_fdl +  kl_loss + l2_loss
+        loss_dict = {'recon' : float(recon_loss.data),
+                     'fdl'   : float(recon_fdl.data),
+                     'kl'    : float(kl_loss.data),
+                     'l2'    : float(l2_loss.data),
+                     'total' : float(loss.data)}
+        if self.use_fdl:
+            loss += recon_fdl
+            loss_dict['recon_fdl'] = float(recon_loss.data)
 
         return loss, loss_dict
         
