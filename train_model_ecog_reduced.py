@@ -55,6 +55,7 @@ parser.add_argument('--ch_idx', nargs='+', type=int, default=None)
 parser.add_argument('--device_num', type=int, default=None)
 parser.add_argument('--multidevice', action='store_true', default=False)
 parser.add_argument('--loss', type=str, default='mse')
+parser.add_argument('--use_fdl', action='store_true', default=False)
 parser.add_argument('--predict', action='store_true', default=False)
 parser.add_argument('--attention', action='store_true', default=False)
 
@@ -76,11 +77,10 @@ def main():
     save_loc, hyperparams = generate_save_loc(args, hyperparams, orion_hp_string)
     save_loc = save_loc[:-1] + 'varstd'
     if args.attention:
-        save_loc = save_loc + '_attn' + os.sep
-    else:
-        save_loc = save_loc + os.sep
+        save_loc = save_loc + '_attn'
     if args.drop_ratio > 0:
-        save_loc = save_loc + f'_droprat{args.drop_ratio}' + os.sep
+        save_loc = save_loc + f'_droprat{args.drop_ratio}'
+    save_loc = save_loc + os.sep
     
     save_parameters(save_loc, hyperparams)
     
@@ -107,7 +107,8 @@ def main():
                                                                multidevice = args.multidevice,
                                                                mse = mse,
                                                                attention = args.attention,
-                                                               transform = transforms)
+                                                               transform = transforms,
+                                                               use_fdl = args.use_fdl)
         
     print_model_description(model)
     
@@ -154,7 +155,7 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None):
+def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False):
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
         model, objective = prep_lfads(input_dims = input_dims,
@@ -173,7 +174,8 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       dt= data_dict['dt'],
                                       multidevice=multidevice,
                                       mse=mse,
-                                      attention=attention)
+                                      attention=attention,
+                                      use_fdl=use_fdl)
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -245,7 +247,7 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False):
+def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False, use_fdl=True):
     from objective import LFADS_Loss, LogLikelihoodGaussian
     from lfads import LFADS_Ecog_SingleSession_Net
 
@@ -273,6 +275,7 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
     loglikelihood = LogLikelihoodGaussian(mse=mse)
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
+                           use_fdl                  = use_fdl
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
                                                        'l2': hyperparams['objective']['l2']},
                            l2_con_scale             = hyperparams['objective']['l2_con_scale'],
@@ -318,6 +321,13 @@ def prep_conv3d_lfads(input_dims, hyperparams, device, dtype):
     
     
     return model, objective
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def prep_conv1d_lfads_ecog(input_dims, hyperparams, device, dtype):
+    
+    from objective import Conv_LFADS_Ecog_Loss, 
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------

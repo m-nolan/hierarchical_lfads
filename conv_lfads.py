@@ -250,6 +250,7 @@ class Conv1d_LFADS_Net(nn.Module):
         batch_size, num_ch, seq_len, num_elec = x.shape
         # x is the [n_batch, n_ch, n_time, n_elec] ECoG array with added dummy channel
         
+        breakpoint()
         # conv block
         Ind = list()
         conv_tic = time.time()
