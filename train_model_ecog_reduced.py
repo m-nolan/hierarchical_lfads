@@ -325,9 +325,41 @@ def prep_conv3d_lfads(input_dims, hyperparams, device, dtype):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
+# using a conv input, output block to model ECoG, LFP data
+
 def prep_conv1d_lfads_ecog(input_dims, hyperparams, device, dtype):
     
-    from objective import Conv_LFADS_Ecog_Loss, 
+    from objective import Conv_LFADS_Ecog_Loss
+    from conv_lfads import Conv1d_LFADS_Net, LogLikelihoodGaussian
+    
+    model = Conv1d_LFADS_Net(input_dims      = (num_steps, width, height),
+                             channel_dims    = hyperparams['model']['channel_dims'],
+                             factor_size     = hyperparams['model']['factor_size'],
+                             g_encoder_size  = hyperparams['model']['g_encoder_size'],
+                             c_encoder_size  = hyperparams['model']['c_encoder_size'],
+                             g_latent_size   = hyperparams['model']['g_latent_size'],
+                             u_latent_size   = hyperparams['model']['u_latent_size'],
+                             controller_size = hyperparams['model']['controller_size'],
+                             generator_size  = hyperparams['model']['generator_size'],
+                             prior           = hyperparams['model']['prior'],
+                             clip_val        = hyperparams['model']['clip_val'],
+                             conv_dropout    = hyperparams['model']['conv_dropout'],
+                             lfads_dropout   = hyperparams['model']['lfads_dropout'],
+                             do_normalize_factors = hyperparams['model']['normalize_factors'],
+                             max_norm        = hyperparams['model']['max_norm'],
+                             device          = device).to(device)
+    model.to(dtype=dtype)
+    torch.set_default_dtype(dtype)
+    
+    loglikelihood = LogLikelihoodGaussian()
+    objective = Conv_LFADS_Loss(loglikelihood=loglikelihood,
+                                use_fdl=use_fdl,
+                                loss_weight_dict={'kl': kyperparams['objective']['kl'],
+                                                  'l2': hyperparams['objective']['l2']},
+                                l2_con_scale=hyperparams['objective']['l2_con_scale'],
+                                l2_gen_scale=hyperparams['objective']['l2_gen_scale']).to(device)
+    
+    return model, objective
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
