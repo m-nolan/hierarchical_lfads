@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.fft import rfft
 from torch.nn.parallel.data_parallel import DataParallel
 import pdb
 from math import log
@@ -101,11 +102,15 @@ class LFADS_Loss(Base_Loss):
         self.loglikelihood = loglikelihood
         self.use_fdl = use_fdl
         
-    def freq_domain_loss(self, x_orig, x_recon):
+    def freq_domain_loss(self, x_orig, x_recon, min_clamp=-20.0, eps=1e-13):
         # data is [n_batch, n_time, n_ch]
-        x_orig_lsp = torch.log10(torch.abs(torch.fft.rfft(x_orig,dim=1)))
-        x_recon_lsp = torch.log10(torch.abs(torch.fft.rfft(x_recon,dim=1)))
-        return F.mse_loss(x_orig_lsp,x_recon_lsp,reduction=None)
+        x_orig_lsp = torch.log10(torch.abs(rfft(x_orig,dim=1))+eps)
+        x_recon_lsp = torch.log10(torch.abs(rfft(x_recon,dim=1))+eps)
+#         x_orig_lsp = torch.clamp(torch.log10(torch.abs(rfft(x_orig,dim=1))),min=min_clamp)
+#         x_recon_lsp = torch.clamp(torch.log10(torch.abs(rfft(x_recon,dim=1))),min=min_clamp)
+        if torch.any(torch.isnan(x_orig_lsp)) or torch.any(torch.isnan(x_recon_lsp)):
+            breakpoint()
+        return F.mse_loss(x_orig_lsp,x_recon_lsp,reduction='sum')/x_orig_lsp.shape[0]
         
     def forward(self, x_orig, x_recon, model):
         kl_weight = self.loss_weights['kl']['weight']
@@ -133,7 +138,7 @@ class LFADS_Loss(Base_Loss):
                      'total' : float(loss.data)}
         if self.use_fdl:
             loss += recon_fdl
-            loss_dict['recon_fdl'] = float(recon_loss.data)
+            loss_dict['recon_fdl'] = float(recon_fdl.data)
 
         if torch.isinf(loss):
             import matplotlib.pyplot as plt
