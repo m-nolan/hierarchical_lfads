@@ -48,6 +48,39 @@ class Base_Loss(nn.Module):
                 pass
         return False
 
+# - - -- --- ----- -------- ----- --- -- - - #
+# - - - Wasserstein Adverserial Error  - - - #
+# - - -- --- ----- -------- ----- --- -- - - #
+class WAE_Loss(Base_Loss):
+    def __init__(self,n_units=512,n_layers=3):
+        None
+    
+    def forward(self,pred,trg):
+        loss = 1
+        loss_dict = {
+            'loss': loss
+        }
+        return loss, loss_dict
+
+# - - -- --- ----- -------- ----- --- -- - - #
+# - - -- log-scale freq-domain error  -- - - #
+# - - -- --- ----- -------- ----- --- -- - - #
+
+class Lsfde(Base_Loss):
+    def __init__(self, axis=1):
+        self.axis = axis
+
+    def forward(self,trg,pred):
+        trg_hat = torch.fft.rfft(trg,dim=self.axis)
+        pred_hat = torch.fft.rfft(pred,dim=self.axis)
+        diff_ls = torch.log10(pred_hat) - torch.log10(trg_hat)
+        err = torch.abs(diff_ls).sum()
+        loss = err
+        loss_dict = {
+            'log_scale_freq_loss': err,
+        }
+        return loss, loss_dict
+
 class SVLAE_Loss(Base_Loss):
     def __init__(self, loglikelihood_obs, loglikelihood_deep,
                  loss_weight_dict = {'kl_obs' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0,    'max' : 1.0, 'min' : 0.0},

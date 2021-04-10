@@ -76,11 +76,11 @@ def main():
     save_loc, hyperparams = generate_save_loc(args, hyperparams, orion_hp_string)
     save_loc = save_loc[:-1] + 'varstd'
     if args.attention:
-        save_loc = save_loc + '_attn' + os.sep
+        save_loc = save_loc + '-attn' + os.sep
     else:
         save_loc = save_loc + os.sep
     if args.drop_ratio > 0:
-        save_loc = save_loc + f'_droprat{args.drop_ratio}' + os.sep
+        save_loc = save_loc[:-1] + f'-droprat{args.drop_ratio}' + os.sep
     
     save_parameters(save_loc, hyperparams)
     
