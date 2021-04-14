@@ -14,6 +14,8 @@ import pickle
 
 from orion.client import report_results
 
+from dataset import EcogTensorDataset, DropChannels
+
 from trainer import RunManager
 from scheduler import LFADS_Scheduler
 
@@ -411,55 +413,6 @@ def prep_svlae(input_dims, hyperparams, device, dtype, dt):
     
     return model, objective
     
-#-------------------------------------------------------------------
-#-------------------------------------------------------------------
-# move this later
-class EcogTensorDataset(Dataset):
-    r"""Dataset wrapping tensors.
-
-    Each sample will be retrieved by indexing tensors along the first dimension.
-
-    Arguments:
-        *tensors (Tensor): tensors that have the same size of the first dimension.
-    """
-
-    def __init__(self, *tensors, device='cpu', transform=None):
-        assert all(tensors[0].size(0) == tensor.size(0) for tensor in tensors)
-        self.tensors = tensors
-        self.device = device
-        self.transform = transform
-
-    def __getitem__(self, index):
-        sample = tuple(tensor[index].to(self.device) for tensor in self.tensors)
-        if self.transform:
-            sample = tuple(self.transform(s) for s in sample)
-        return sample
-
-    def __len__(self):
-        return self.tensors[0].size(0)
-
-#-------------------------------------------------------------------
-#-------------------------------------------------------------------
-# data dropout transforms
-class DropChannels(object):
-    '''
-        Dataset transform to randomly drop channels (i.e. set all values to zero) within a sample.
-        The number of dropped channels is determined by the drop ratio:
-            n_drop = floor(drop_ratio*n_ch)
-        Channel dimension is assumed to be the last indexed tensor dimension. This may need to be
-        adjusted for multidimensional time series data, e.g. spectrograms.
-    '''
-    def __init__(self,drop_ratio=0.1):
-        self.drop_ratio = drop_ratio
-
-    def __call__(self,sample):
-        n_ch = sample.shape[-1]
-        n_ch_drop = floor(self.drop_ratio*n_ch)
-        drop_ch_idx = torch.randperm(n_ch)[:n_ch_drop]
-        sample[:,drop_ch_idx] = 0.
-        return sample
-        
-
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
     
