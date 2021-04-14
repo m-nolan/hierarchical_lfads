@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.signal import iirfilter, filtfilt
 import pdb
 import torch
 import torchvision
@@ -281,3 +282,26 @@ class SyntheticCalciumVideoDataset(torch.utils.data.Dataset):
     def close(self):
         self.tempfile.close()
         del self.tensors
+
+# - - -- --- ----- -------- ------------- -------- ----- --- -- - - #
+# - - -- --- ----- -------- ------------- -------- ----- --- -- - - #
+class FilteredNoiseDataset(torch.utils.data.Dataset):
+    
+    def __init__(self,n_ch,seq_len,filt_w,filt_n=10,rng_seed=42):
+
+        self.n_ch = n_ch
+        self.seq_len = seq_len
+        self.filt_w = filt_w
+        self.filt_n = filt_n
+        b, a = iirfilter(self.filt_n, self.filt_w)
+        self.filt_b, self.filt_a = b, a
+        self.rng_seed = rng_seed
+    
+    def __getitem__(self,idx):
+        z = torch.randn(self.seq_len,self.n_ch)
+        s = filtfilt(self.filt_b,self.filt_a,z,axis=0)
+        s = (s - s.mean(axis=0))/s.std(axis=0)
+        return torch.tensor(s)
+
+    def __len__(self):
+        return None
