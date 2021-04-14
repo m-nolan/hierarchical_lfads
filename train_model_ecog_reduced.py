@@ -77,9 +77,11 @@ def main():
     save_loc, hyperparams = generate_save_loc(args, hyperparams, orion_hp_string)
     save_loc = save_loc[:-1] + 'varstd'
     if args.attention:
-        save_loc = save_loc + '_attn'
+        save_loc = save_loc + '-attn'
     if args.drop_ratio > 0:
-        save_loc = save_loc + f'_droprat{args.drop_ratio}'
+        save_loc = save_loc + f'-droprat{args.drop_ratio}'
+    if args.use_fdl:
+        save_loc = save_loc + '-fdl'
     save_loc = save_loc + os.sep
     
     save_parameters(save_loc, hyperparams)
@@ -275,7 +277,7 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
     loglikelihood = LogLikelihoodGaussian(mse=mse)
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
-                           use_fdl                  = use_fdl
+                           use_fdl                  = use_fdl,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
                                                        'l2': hyperparams['objective']['l2']},
                            l2_con_scale             = hyperparams['objective']['l2_con_scale'],
