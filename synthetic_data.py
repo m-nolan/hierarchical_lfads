@@ -287,7 +287,7 @@ class SyntheticCalciumVideoDataset(torch.utils.data.Dataset):
 # - - -- --- ----- -------- ------------- -------- ----- --- -- - - #
 class FilteredNoiseDataset(torch.utils.data.Dataset):
     
-    def __init__(self,n_ch,seq_len,filt_w,filt_n=10,rng_seed=42):
+    def __init__(self,n_ch,seq_len,filt_w,filt_n=5,rng_seed=42,device='cpu'):
 
         self.n_ch = n_ch
         self.seq_len = seq_len
@@ -296,12 +296,14 @@ class FilteredNoiseDataset(torch.utils.data.Dataset):
         b, a = iirfilter(self.filt_n, self.filt_w)
         self.filt_b, self.filt_a = b, a
         self.rng_seed = rng_seed
+        self.dtype = torch.float32
+        self.device = device
     
     def __getitem__(self,idx):
         z = torch.randn(self.seq_len,self.n_ch)
         s = filtfilt(self.filt_b,self.filt_a,z,axis=0)
         s = (s - s.mean(axis=0))/s.std(axis=0)
-        return torch.tensor(s)
+        return torch.tensor(s,dtype=self.dtype).to(self.device)
 
     def __len__(self):
-        return None
+        return 10000 # arbitrarily large, just needs to be larger than whatever batch size I'm calling
