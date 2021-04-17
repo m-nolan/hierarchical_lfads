@@ -72,7 +72,7 @@ def train_model(w):
     orion_hp_string, hyperparams = prep_orion(args, hyperparams)
 
     save_loc, hyperparams = generate_save_loc(args, hyperparams)
-    save_loc = save_loc + f'-fl{w[0]}u{w[1]}'
+    save_loc = save_loc + f'-fl{w[0]:0.2f}u{w[1]:0.2f}'
     save_loc = save_loc + os.sep
     
     save_parameters(save_loc, hyperparams)
@@ -126,7 +126,7 @@ def train_model(w):
                              load_checkpoint=(not args.restart))
     run_manager.run()
         
-    save_figs(save_loc, run_manager.model, run_manager.valid_dl, plotter)
+    # save_figs(save_loc, run_manager.model, run_manager.valid_dl, plotter)
     pickle.dump(run_manager.loss_dict, open(save_loc+'/loss.pkl', 'wb'))
 
 #-------------------------------------------------------------------
@@ -414,8 +414,8 @@ def prep_filtnoise_data(batch_size, device, filt_w, fs=250, seq_len=50, ch_idx=N
 
     input_size = n_ch
 
-    train_dl = torch.utils.data.DataLoader(filtnoise_dataset, batch_size=batch_size)
-    valid_dl = torch.utils.data.DataLoader(filtnoise_dataset, batch_size=batch_size)
+    train_dl = torch.utils.data.DataLoader(filtnoise_dataset, batch_size=batch_size, drop_last=True)
+    valid_dl = torch.utils.data.DataLoader(filtnoise_dataset, batch_size=batch_size, drop_last=True)
 
     plotter = {}
 
@@ -621,6 +621,17 @@ if __name__ == '__main__':
     w_list = torch.tensor(
         [
             [0.1, 0.2],
+            [0.1, 0.3],
+            [0.1, 0.4],
+            [0.1, 0.5],
+            [0.2, 0.3],
+            [0.2, 0.4],
+            [0.2, 0.5],
+            [0.2, 0.6],
+            [0.3, 0.4],
+            [0.3, 0.5],
+            [0.3, 0.6],
+            [0.3, 0.7]
         ]
     ) # add more to this later, add this information to 
     for w in w_list:

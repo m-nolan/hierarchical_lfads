@@ -438,7 +438,7 @@ class LFADS_Ecog_SingleSession_Net(LFADS_Net):
         
     def forward(self, input):
         factors, gen_inputs = super(LFADS_Ecog_SingleSession_Net, self).forward(input.permute(1, 0, 2))
-        recon = {'rates' : self.fc_logrates(factors)} # the trace data is both positive and negative; exp() is a poor inductive bias here
+        recon = {'rates' : self.fc_logrates(factors)}
         recon['data'] = recon['rates'].clone().permute(1, 0, 2)
         return recon, (factors, gen_inputs)
 
