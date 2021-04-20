@@ -127,6 +127,7 @@ class SVLAE_Loss(Base_Loss):
 class LFADS_Loss(Base_Loss):
     def __init__(self, loglikelihood,
                  use_fdl = False,
+                 use_tdl = True,
                  loss_weight_dict= {'kl' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0},
                                     'l2' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0}},
                  l2_con_scale=0.0, l2_gen_scale=0.0):
@@ -165,10 +166,12 @@ class LFADS_Loss(Base_Loss):
             l2_loss += 0.5 * l2_weight * self.l2_con_scale * model.controller.gru_controller.hidden_weight_l2_norm()
             
         loss = recon_loss +  kl_loss + l2_loss
-        loss_dict = {'recon' : float(recon_loss.data),
-                     'kl'    : float(kl_loss.data),
+        loss_dict = {'kl'    : float(kl_loss.data),
                      'l2'    : float(l2_loss.data),
                      'total' : float(loss.data)}
+        if self.use_tdl:
+            loss += recon_loss
+            loss_dict['recon'] = float(recon_loss.data)
         if self.use_fdl:
             loss += recon_fdl
             loss_dict['recon_fdl'] = float(recon_fdl.data)

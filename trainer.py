@@ -54,8 +54,8 @@ class RunManager():
             for i,x in enumerate(self.train_dl):
                 tr_tic = time.time()
 #                 print(x[0].session)
-                x = x[0]
-                
+                if isinstance(x, list) or isinstance(x,tuple):
+                    x = x[0]
                 self.optimizer.zero_grad()
                 fw_tic = time.time()
                 recon, latent = self.model(x)
@@ -127,7 +127,8 @@ class RunManager():
 #             print(len(self.valid_dl))
             for i, x in enumerate(self.valid_dl):
                 with torch.no_grad():
-                    x = x[0]
+                    if isinstance(x, list) or isinstance(x,tuple):
+                        x = x[0]
                     fw_val_tic = time.time()
                     recon, latent = self.model(x)
 #                     print('fw val time: ',time.time()-fw_val_tic)

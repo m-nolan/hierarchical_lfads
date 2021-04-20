@@ -12,9 +12,7 @@ import torchvision.transforms as trf
 from torch.utils.data.dataset import Dataset
 import pickle
 
-from orion.client import report_results
-
-from dataset import EcogTensorDataset, DropChannels
+from synthetic_data import FilteredNoiseDataset
 
 from trainer import RunManager
 from scheduler import LFADS_Scheduler
@@ -53,16 +51,12 @@ parser.add_argument('--log10_l2_con_scale', type=float, default=None)
 parser.add_argument('--drop_ratio', type=float, default=0.0)
 
 parser.add_argument('--seq_len', type=int, default=50)
-parser.add_argument('--ch_idx', nargs='+', type=int, default=None)
 parser.add_argument('--device_num', type=int, default=None)
+parser.add_argument('--ch_idx', type=int, default=None)
 parser.add_argument('--multidevice', action='store_true', default=False)
 parser.add_argument('--loss', type=str, default='mse')
-parser.add_argument('--use_fdl', action='store_true', default=False)
-parser.add_argument('--use_tdl', action='store_true', default=True)
-parser.add_argument('--predict', action='store_true', default=False)
-parser.add_argument('--attention', action='store_true', default=False)
 
-def main():
+def train_model(w):
     args = parser.parse_args()
     
     if args.device_num is None:
@@ -77,22 +71,14 @@ def main():
     
     orion_hp_string, hyperparams = prep_orion(args, hyperparams)
 
-    save_loc, hyperparams = generate_save_loc(args, hyperparams, orion_hp_string)
-    save_loc = save_loc[:-1] + 'varstd'
-    if args.attention:
-        save_loc = save_loc + '-attn'
-    if args.drop_ratio > 0:
-        save_loc = save_loc + f'-droprat{args.drop_ratio}'
-    if args.use_fdl:
-        save_loc = save_loc + '-fdl'
+    save_loc, hyperparams = generate_save_loc(args, hyperparams)
+    save_loc = save_loc + f'-fl{w[0]:0.2f}u{w[1]:0.2f}'
     save_loc = save_loc + os.sep
     
     save_parameters(save_loc, hyperparams)
     
     if not os.path.exists(save_loc):
         os.makedirs(save_loc)
-        
-    data_dict   = read_data(args.data_path)
 
     mse = args.loss == 'mse'
     
@@ -100,10 +86,7 @@ def main():
         transforms = trf.Compose([DropChannels(drop_ratio=args.drop_ratio)])
     else:
         transforms = None
-
     train_dl, valid_dl, plotter, model, objective = prep_model(model_name  = args.model,
-                                                               data_dict   = data_dict,
-                                                               data_suffix = args.data_suffix,
                                                                batch_size  = args.batch_size,
                                                                seq_len = args.seq_len,
                                                                ch_idx = args.ch_idx,
@@ -111,15 +94,13 @@ def main():
                                                                hyperparams = hyperparams,
                                                                multidevice = args.multidevice,
                                                                mse = mse,
-                                                               attention = args.attention,
                                                                transform = transforms,
-                                                               use_fdl = args.use_fdl,
-                                                               use_tdl = args.use_tdl)
+                                                               fs = 250,
+                                                               filt_w = w)
         
     print_model_description(model)
-    
     optimizer, scheduler = prep_optimizer(model, hyperparams)
-        
+    
     if args.use_tensorboard:
         writer, rm_plotter = prep_tensorboard(save_loc, plotter, args.restart)
     else:
@@ -145,7 +126,7 @@ def main():
                              load_checkpoint=(not args.restart))
     run_manager.run()
         
-    save_figs(save_loc, run_manager.model, run_manager.valid_dl, plotter)
+    # save_figs(save_loc, run_manager.model, run_manager.valid_dl, plotter)
     pickle.dump(run_manager.loss_dict, open(save_loc+'/loss.pkl', 'wb'))
 
 #-------------------------------------------------------------------
@@ -161,51 +142,19 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False, use_tdl=True):
-    if model_name == 'lfads':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
-        model, objective = prep_lfads(input_dims = input_dims,
-                                      hyperparams=hyperparams,
-                                      device= device,
-                                      dtype=train_dl.dataset.tensors[0].dtype,
-                                      dt= data_dict['dt']
-                                      )
+def prep_model(model_name, batch_size, device, hyperparams, filt_w, fs=250, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False):
 
     if model_name == 'lfads_ecog':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
+        train_dl, valid_dl, input_dims, plotter = prep_filtnoise_data(batch_size=batch_size, device=device, filt_w=filt_w, fs=fs, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
         model, objective = prep_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
-                                      dtype=train_dl.dataset.tensors[0].dtype,
-                                      dt= data_dict['dt'],
+                                      dtype=train_dl.dataset.dtype,
+                                      dt= 1/fs,
                                       multidevice=multidevice,
                                       mse=mse,
                                       attention=attention,
-                                      use_fdl=use_fdl,
-                                      use_tdl=use_tdl)
-        
-    elif model_name == 'svlae':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
-        
-        if 'obs_gain_init' in data_dict.keys():
-            print('gain= %.4f'%data_dict['obs_gain_init'].mean())
-            hyperparams['model']['obs']['gain']['value'] = data_dict['obs_gain_init']
-        if 'obs_bias_init' in data_dict.keys():
-            print('bias= %.4f'%data_dict['obs_bias_init'].mean())
-            hyperparams['model']['obs']['bias']['value'] = data_dict['obs_bias_init']
-        if 'obs_var_init' in data_dict.keys():
-            print('var= %.4f'%data_dict['obs_var_init'].mean())
-            hyperparams['model']['obs']['var']['value'] = data_dict['obs_var_init']
-        if 'obs_tau_init' in data_dict.keys():
-            print('tau= %.4f'%data_dict['obs_tau_init'].mean())
-            hyperparams['model']['obs']['tau']['value'] = data_dict['obs_tau_init']
-        
-        model, objective = prep_svlae(input_dims = input_dims,
-                                      hyperparams=hyperparams,
-                                      device= device,
-                                      dtype=train_dl.dataset.tensors[0].dtype,
-                                      dt=data_dict['dt']
-                                      )
+                                      use_fdl=use_fdl)
         
     elif model_name == 'conv3d_lfads':
         train_dl, valid_dl, input_dims, plotter = prep_video(data_dict=data_dict, batch_size=batch_size, device=device)
@@ -214,8 +163,6 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                              device= device,
                                              dtype=train_dl.dataset.dtype
                                              )
-    else:
-        raise NotImplementedError('Model must be one of \'lfads\', \'conv3d_lfads\', or \'svlae\'')
         
     return train_dl, valid_dl, plotter, model, objective
     
@@ -254,7 +201,7 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False, use_fdl=True, use_tdl=True):
+def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False, use_fdl=True):
     from objective import LFADS_Loss, LogLikelihoodGaussian
     from lfads import LFADS_Ecog_SingleSession_Net
 
@@ -283,7 +230,6 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
                            use_fdl                  = use_fdl,
-                           use_tdl                  = use_tdl,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
                                                        'l2': hyperparams['objective']['l2']},
                            l2_con_scale             = hyperparams['objective']['l2_con_scale'],
@@ -459,6 +405,21 @@ def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=N
                'valid' : Plotter(time=TIME, truth=valid_truth)}
     
     return train_dl, valid_dl, input_size, plotter
+
+def prep_filtnoise_data(batch_size, device, filt_w, fs=250, seq_len=50, ch_idx=None, transform=None):
+    if ch_idx is None:
+        ch_idx = torch.arange(42)
+        n_ch = len(ch_idx)
+    filtnoise_dataset = FilteredNoiseDataset(n_ch, seq_len, filt_w, device=device)
+
+    input_size = n_ch
+
+    train_dl = torch.utils.data.DataLoader(filtnoise_dataset, batch_size=batch_size, drop_last=True)
+    valid_dl = torch.utils.data.DataLoader(filtnoise_dataset, batch_size=batch_size, drop_last=True)
+
+    plotter = {}
+
+    return train_dl, valid_dl, input_size, plotter
     
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
@@ -602,11 +563,27 @@ def prep_orion(args, hyperparams):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def generate_save_loc(args, hyperparams, orion_hp_string):
-    data_name = args.data_path.split(os.path.sep)[-1]
+# def generate_save_loc(args, hyperparams, orion_hp_string):
+#     data_name = args.data_path.split(os.path.sep)[-1]
+#     model_name = hyperparams['model_name']
+#     if args.data_suffix == 'ospikes':
+#         model_name += '_oasis'
+#     mhp_list = [key.replace('size', '').replace('deep', 'd').replace('obs', 'o').replace('_', '')[:4] + str(val) for key, val in hyperparams['model'].items() if 'size' in key]
+#     mhp_list.append(f'seqlen{args.seq_len}')
+#     if args.ch_idx is None:
+#         n_ch = 42 # bad magic number, get dataset info involved
+#     else:
+#         n_ch = len(args.ch_idx)
+#     mhp_list.append(f'nch{n_ch}')
+#     mhp_list.sort()
+#     hyperparams['run_name'] = '_'.join(mhp_list)
+#     hyperparams['run_name'] += orion_hp_string
+#     save_loc = '%s/%s/%s/%s/'%(args.output_dir, data_name, model_name, hyperparams['run_name'])
+#     return save_loc, hyperparams
+
+def generate_save_loc(args,hyperparams):
+    data_name = 'filtnoise'
     model_name = hyperparams['model_name']
-    if args.data_suffix == 'ospikes':
-        model_name += '_oasis'
     mhp_list = [key.replace('size', '').replace('deep', 'd').replace('obs', 'o').replace('_', '')[:4] + str(val) for key, val in hyperparams['model'].items() if 'size' in key]
     mhp_list.append(f'seqlen{args.seq_len}')
     if args.ch_idx is None:
@@ -616,8 +593,7 @@ def generate_save_loc(args, hyperparams, orion_hp_string):
     mhp_list.append(f'nch{n_ch}')
     mhp_list.sort()
     hyperparams['run_name'] = '_'.join(mhp_list)
-    hyperparams['run_name'] += orion_hp_string
-    save_loc = '%s/%s/%s/%s/'%(args.output_dir, data_name, model_name, hyperparams['run_name'])
+    save_loc = os.path.join(args.output_dir,data_name,model_name,hyperparams['run_name'])
     return save_loc, hyperparams
 
 #-------------------------------------------------------------------
@@ -642,4 +618,21 @@ def save_figs(save_loc, model, dl, plotter):
 #-------------------------------------------------------------------
 
 if __name__ == '__main__':
-    main()
+    w_list = torch.tensor(
+        [
+            [0.1, 0.2],
+            [0.1, 0.3],
+            [0.1, 0.4],
+            [0.1, 0.5],
+            [0.2, 0.3],
+            [0.2, 0.4],
+            [0.2, 0.5],
+            [0.2, 0.6],
+            [0.3, 0.4],
+            [0.3, 0.5],
+            [0.3, 0.6],
+            [0.3, 0.7]
+        ]
+    ) # add more to this later, add this information to 
+    for w in w_list:
+        train_model(w)
