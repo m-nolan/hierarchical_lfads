@@ -58,6 +58,7 @@ parser.add_argument('--device_num', type=int, default=None)
 parser.add_argument('--multidevice', action='store_true', default=False)
 parser.add_argument('--loss', type=str, default='mse')
 parser.add_argument('--use_fdl', action='store_true', default=False)
+parser.add_argument('--use_tdl', action='store_true', default=True)
 parser.add_argument('--predict', action='store_true', default=False)
 parser.add_argument('--attention', action='store_true', default=False)
 
@@ -112,7 +113,8 @@ def main():
                                                                mse = mse,
                                                                attention = args.attention,
                                                                transform = transforms,
-                                                               use_fdl = args.use_fdl)
+                                                               use_fdl = args.use_fdl,
+                                                               use_tdl = args.use_tdl)
         
     print_model_description(model)
     
@@ -159,7 +161,7 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False):
+def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False, use_tdl=True):
     if model_name == 'lfads':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, seq_len=seq_len, device=device, ch_idx=ch_idx)
         model, objective = prep_lfads(input_dims = input_dims,
@@ -179,7 +181,8 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       multidevice=multidevice,
                                       mse=mse,
                                       attention=attention,
-                                      use_fdl=use_fdl)
+                                      use_fdl=use_fdl,
+                                      use_tdl=use_tdl)
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -251,7 +254,7 @@ def prep_lfads(input_dims, hyperparams, device, dtype, dt):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False, use_fdl=True):
+def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False, use_fdl=True, use_tdl=True):
     from objective import LFADS_Loss, LogLikelihoodGaussian
     from lfads import LFADS_Ecog_SingleSession_Net
 
@@ -280,6 +283,7 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
                            use_fdl                  = use_fdl,
+                           use_tdl                  = use_tdl,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
                                                        'l2': hyperparams['objective']['l2']},
                            l2_con_scale             = hyperparams['objective']['l2_con_scale'],
