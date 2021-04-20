@@ -6,8 +6,9 @@ python train_model_ecog_reduced.py \
 -p /home/ws5/manolan/ecog_pred/hierarchical_lfads/hyperparameters/ecog/lfads_ecog_reduced_nofilt_allgpu.yaml \
 -o /home/ws5/manolan/data/models/pyt/lfads \
 --data_suffix ecog_fl80u100 \
---max_epochs 1400 \
+--max_epochs 3000 \
 --batch_size 1000 \
 --seq_len 50 \
 --loss mse \
+--device_num 0 \
 -t
