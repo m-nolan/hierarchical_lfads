@@ -1,6 +1,6 @@
 import torch
 import torchvision
-from torch.utils.data.dataloader import _DataLoaderIter
+# from torch.utils.data.dataloader import _DataLoaderIter
 
 class LFADS_MultiSession_Dataset(torch.utils.data.Dataset):
     
@@ -44,20 +44,20 @@ class SessionLoader(torch.utils.data.DataLoader):
     def __iter__(self):
         return _SessionLoaderIter(self)
     
-class _SessionLoaderIter(_DataLoaderIter):
+# class _SessionLoaderIter(_DataLoaderIter):
     
-    def __init__(self, loader):
-        super(_SessionLoaderIter, self).__init__(loader)
+#     def __init__(self, loader):
+#         super(_SessionLoaderIter, self).__init__(loader)
         
-    def __next__(self):
-        x, idx = super(_SessionLoaderIter, self).__next__()
-        x = x.squeeze()
-        setattr(x, 'session', idx)
-        return x,
+#     def __next__(self):
+#         x, idx = super(_SessionLoaderIter, self).__next__()
+#         x = x.squeeze()
+#         setattr(x, 'session', idx)
+#         return x,
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
-class EcogTensorDataset(Dataset):
+class EcogTensorDataset(torch.utils.data.Dataset):
     r"""Dataset wrapping tensors.
 
     Each sample will be retrieved by indexing tensors along the first dimension.

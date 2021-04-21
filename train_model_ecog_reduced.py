@@ -58,7 +58,7 @@ parser.add_argument('--device_num', type=int, default=None)
 parser.add_argument('--multidevice', action='store_true', default=False)
 parser.add_argument('--loss', type=str, default='mse')
 parser.add_argument('--use_fdl', action='store_true', default=False)
-parser.add_argument('--use_tdl', action='store_true', default=True)
+parser.add_argument('--block_tdl', action='store_true', default=False)
 parser.add_argument('--predict', action='store_true', default=False)
 parser.add_argument('--attention', action='store_true', default=False)
 
@@ -85,6 +85,8 @@ def main():
         save_loc = save_loc + f'-droprat{args.drop_ratio}'
     if args.use_fdl:
         save_loc = save_loc + '-fdl'
+    if args.use_fdl and args.block_tdl:
+        save_loc = save_loc + 'only'
     save_loc = save_loc + os.sep
     
     save_parameters(save_loc, hyperparams)
@@ -100,7 +102,7 @@ def main():
         transforms = trf.Compose([DropChannels(drop_ratio=args.drop_ratio)])
     else:
         transforms = None
-
+    
     train_dl, valid_dl, plotter, model, objective = prep_model(model_name  = args.model,
                                                                data_dict   = data_dict,
                                                                data_suffix = args.data_suffix,
@@ -114,7 +116,7 @@ def main():
                                                                attention = args.attention,
                                                                transform = transforms,
                                                                use_fdl = args.use_fdl,
-                                                               use_tdl = args.use_tdl)
+                                                               use_tdl = not args.block_tdl)
         
     print_model_description(model)
     
