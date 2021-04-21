@@ -135,6 +135,7 @@ class LFADS_Loss(Base_Loss):
         super(LFADS_Loss, self).__init__(loss_weight_dict=loss_weight_dict, l2_con_scale=l2_con_scale, l2_gen_scale=l2_gen_scale)
         self.loglikelihood = loglikelihood
         self.use_fdl = use_fdl
+        self.use_tdl = use_tdl
         
     def freq_domain_loss(self, x_orig, x_recon, min_clamp=-20.0, eps=1e-13):
         # data is [n_batch, n_time, n_ch]
@@ -165,16 +166,16 @@ class LFADS_Loss(Base_Loss):
         if hasattr(model, 'controller'):
             l2_loss += 0.5 * l2_weight * self.l2_con_scale * model.controller.gru_controller.hidden_weight_l2_norm()
             
-        loss = recon_loss +  kl_loss + l2_loss
+        loss = kl_loss + l2_loss
         loss_dict = {'kl'    : float(kl_loss.data),
-                     'l2'    : float(l2_loss.data),
-                     'total' : float(loss.data)}
+                     'l2'    : float(l2_loss.data)}
         if self.use_tdl:
             loss += recon_loss
             loss_dict['recon'] = float(recon_loss.data)
         if self.use_fdl:
             loss += recon_fdl
             loss_dict['recon_fdl'] = float(recon_fdl.data)
+        loss_dict['total'] = float(loss.data)
 
         if torch.isinf(loss):
             import matplotlib.pyplot as plt

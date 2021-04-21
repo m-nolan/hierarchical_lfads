@@ -57,7 +57,7 @@ class SessionLoader(torch.utils.data.DataLoader):
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
-class EcogTensorDataset(Dataset):
+class EcogTensorDataset(torch.utils.data.Dataset):
     r"""Dataset wrapping tensors.
 
     Each sample will be retrieved by indexing tensors along the first dimension.
