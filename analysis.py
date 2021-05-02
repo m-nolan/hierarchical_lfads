@@ -424,10 +424,10 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     trial_mask = test_data[:,:,0].std(axis=1) < 0.5
     f_psd, data_psd = welch(detrend(test_data[~trial_mask,],type='linear',axis=-2),fs=srate,axis=1) # why axis=-2? multiple batch acceptance? Weird
     _, recon_psd = welch(detrend(recon['data'][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
-    _, diff_psd = welch(detrend(test_data[~trial_mask,]-recon['data'][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
-    f_ar_psd, ar_psd = welch(detrend(ar_model_dict['test_pred'][~test_data_mask,][~trial_mask,],type='linear',axis=-2),fs=250,axis=1)
+    _, diff_psd = welch(detrend(test_data[~trial_mask,]-recon['data'][~trial_mask,].numpy(),type='linear',axis=-2),fs=srate,axis=1)
+    f_ar_psd, ar_psd = welch(detrend(ar_model_dict['test_pred'][~test_data_mask,][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
     f_est = lambda x: x.mean(axis=0)
-    data_psd_bsd = bootstrap_est(data_psd[:,:,0], n_boot, f_est)
+    data_psd_bsd = bootstrap_est(data_psd[:,:,0], n_boot, f_est) # all of this is JUST THE 1st CHANNEL? Why? Fix that later.
     data_psd_mean = data_psd_bsd.mean(axis=0)
     data_psd_95ci = np.percentile(data_psd_bsd,[2.5, 97.5],axis=0)
     recon_psd_bsd = bootstrap_est(recon_psd[:,:,0], n_boot, f_est)
@@ -436,7 +436,7 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     ar_psd_bsd = bootstrap_est(ar_psd[:,:,0], n_boot, f_est)
     ar_psd_mean = ar_psd_bsd.mean(axis=0)
     ar_psd_95ci = np.percentile(ar_psd_bsd,[2.5,97.5],axis=0)
-    diff_psd_bsd = bootstrap_est(diff_psd,n_boot,f_est)
+    diff_psd_bsd = bootstrap_est(diff_psd[:,:,0],n_boot,f_est)
     diff_psd_mean = diff_psd_bsd.mean(axis=0)
     diff_psd_95ci = np.percentile(diff_psd_bsd,[2.5, 97.5],axis=0)
     fig, ax = plt.subplots(1,1,dpi=100,sharex=True)
@@ -465,6 +465,8 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
                      'recon_psd_95ci': recon_psd_95ci,
                      'ar_psd_mean': ar_psd_mean,
                      'ar_psd_95ci': ar_psd_95ci,
+                     'diff_psd_mean': diff_psd_mean,
+                     'diff_psd_95ci': diff_psd_95ci,
                      'f_psd': f_psd,
                      'f_ar_psd': f_ar_psd}
 
