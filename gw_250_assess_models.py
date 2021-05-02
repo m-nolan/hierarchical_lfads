@@ -35,8 +35,12 @@ if __name__ == "__main__":
                 'performance_table.csv'))
             run_analysis = (not perf_table_exists) or overwrite
             if run_analysis:
-                analyze_LFADS_ecog_performance.analyze(model_dir_path, dataset_path, 
-                    ar_model_path, hyperparameter_path)
+                try:
+                    analyze_LFADS_ecog_performance.analyze(model_dir_path, dataset_path, 
+                        ar_model_path, hyperparameter_path)
+                except:
+                    # this SHOULD be handled by logging, but I don't know how to do that.
+                    print('analysis error! Skipping for now, fix and re-run.')
             else:
                 print(f'Analysis skipped: Performance Table Exists: {perf_table_exists}\tOverwrite Mode: {overwrite}')
         t_model_end = time.time()
