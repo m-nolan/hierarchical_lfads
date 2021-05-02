@@ -9,6 +9,7 @@
 from analysis import *
 import os
 import argparse
+import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_dir',type=str,required=True)
@@ -42,9 +43,9 @@ def save_performance_table(model_dir_path,metric_stat_table_row):
     metric_stat_table_file = os.path.join(model_dir_path,'performance_table.csv')
     metric_stat_table_row.to_csv(metric_stat_table_file)
 
-def save_figures(f_trace,f_psd,f_loss,psd_data_dict,model_dir_path):
+def save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path):
     # save figures from analysis
-    fig_path = os.path.join(model_dir,'figs')
+    fig_path = os.path.join(model_dir_path,'figs')
     if not os.path.exists(fig_path):
         os.makedirs(fig_path)
     with open(os.path.join(fig_path,'psd_data_dict.pkl'),'wb') as f:
@@ -53,23 +54,28 @@ def save_figures(f_trace,f_psd,f_loss,psd_data_dict,model_dir_path):
     f_trace.savefig(os.path.join(fig_path,'trace.svg'))
     f_psd.savefig(os.path.join(fig_path,'psd.png'))
     f_psd.savefig(os.path.join(fig_path,'psd.svg'))
+    f_diff.savefig(os.path.join(fig_path,'error_psd.png'))
+    f_diff.savefig(os.path.join(fig_path,'error_psd.svg'))
     f_loss.savefig(os.path.join(fig_path,'loss.png'))
     f_loss.savefig(os.path.join(fig_path,'loss.svg'))
 
 def main():
+    t_start = time.time()
     args = parser.parse_args()
     model_dir_path, dataset_path, ar_model_path, hyperparameter_path = get_paths(args)
     ar_model_dict = get_ar_model(ar_model_path)
     # metric_stat_table_row, metrics, test_data_mask = get_model_performance_stat_table(model_dir_path, dataset_path, hyperparameter_path)
     # f_trace, f_psd = model_visualization(model_dir_path, dataset_path, hyperparameter_path,None,n_trace, srate,n_boot,metrics)
-    metric_stat_table_row, metrics, test_data_mak, f_trace, f_psd, psd_data_dict = model_analysis(
+    metric_stat_table_row, metrics, test_data_mak, f_trace, f_psd, f_diff, psd_data_dict = model_analysis(
         model_dir_path, dataset_path, hyperparameter_path, ar_model_dict, n_trace, 
         srate, n_boot)
     f_loss, loss_data = plot_loss_curves(model_dir_path)
     # save performance table
     save_performance_table(model_dir_path, metric_stat_table_row)
     # save figures
-    save_figures(f_trace,f_psd,f_loss,psd_data_dict,model_dir_path)
+    save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path)
+    t_end = time.time()
+    print(f'assessment complete. runtime: {t_end-t_start}\n')
 
 if __name__ == "__main__":
     main()

@@ -422,8 +422,9 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     # power features
     from scipy.signal import welch, detrend
     trial_mask = test_data[:,:,0].std(axis=1) < 0.5
-    f_psd, data_psd = welch(detrend(test_data[~trial_mask,],type='linear',axis=-2),fs=250,axis=1) # why axis=-2? multiple batch acceptance? Weird
-    _, recon_psd = welch(detrend(recon['data'][~trial_mask,],type='linear',axis=-2),fs=250,axis=1)
+    f_psd, data_psd = welch(detrend(test_data[~trial_mask,],type='linear',axis=-2),fs=srate,axis=1) # why axis=-2? multiple batch acceptance? Weird
+    _, recon_psd = welch(detrend(recon['data'][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
+    _, diff_psd = welch(detrend(test_data[~trial_mask,]-recon['data'][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
     f_ar_psd, ar_psd = welch(detrend(ar_model_dict['test_pred'][~test_data_mask,][~trial_mask,],type='linear',axis=-2),fs=250,axis=1)
     f_est = lambda x: x.mean(axis=0)
     data_psd_bsd = bootstrap_est(data_psd[:,:,0], n_boot, f_est)
@@ -435,8 +436,6 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     ar_psd_bsd = bootstrap_est(ar_psd[:,:,0], n_boot, f_est)
     ar_psd_mean = ar_psd_bsd.mean(axis=0)
     ar_psd_95ci = np.percentile(ar_psd_bsd,[2.5,97.5],axis=0)
-    # diff_psd = 10*np.log10(recon_psd[:,:,0])-10*np.log10(data_psd[:,:,0])
-    diff_psd = recon_psd[:,:,0]/data_psd[:,:,0]
     diff_psd_bsd = bootstrap_est(diff_psd,n_boot,f_est)
     diff_psd_mean = diff_psd_bsd.mean(axis=0)
     diff_psd_95ci = np.percentile(diff_psd_bsd,[2.5, 97.5],axis=0)
@@ -448,14 +447,19 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     ax.fill_between(f_ar_psd, 10*np.log10(ar_psd_95ci[0,:]), 10*np.log10(ar_psd_95ci[1,:]), alpha=0.2, label='AR 95% ci')
     ax.plot(f_ar_psd, 10*np.log10(ar_psd_mean), label='AR mean')
     ax.legend(loc=0)
-    # ax[1].fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='diff 95% ci')
-    # ax[1].plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='diff. mean')
-    # ax[1].legend(loc=0)
+    fig_diff, ax_diff = plt.subplots(1,1,dpi=100)
+    ax_diff.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err 95% ci')
+    ax_diff.plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='err mean')
+    ax_diff.legend(loc=0)
     ax.set_xlabel('freq. (Hz)')
-    ax.set_ylabel('PSD (dBu)')
+    ax.set_ylabel('PSD (dB)')
     ax.set_title('Power Spectral Density, Data v. Reconstruction')
     ax.set_xlim(0,100)
-    return fig, ax, {'data_psd_mean': data_psd_mean,
+    ax_diff.set_xlabel('freq. (Hz)')
+    ax_diff.set_ylabel('PSD (dB)')
+    ax_diff.set_title('Power Spectral Density, Reconstruction Error')
+    ax_diff.set_xlim(0,100)
+    return fig, ax, fig_diff, ax_diff, {'data_psd_mean': data_psd_mean,
                      'data_psd_95ci': data_psd_95ci,
                      'recon_psd_mean': recon_psd_mean,
                      'recon_psd_95ci': recon_psd_95ci,
@@ -471,8 +475,8 @@ def model_visualization(model_dir_path,data_path,hyperparameter_path,ar_model_di
     recon, factors, generators = compute_model_outputs(model,torch.tensor(test_data))
     print('Generating test plots...')
     f_trace, _ = plot_test_data_fits(recon, test_data, ar_model_dict, test_data_mask, n, srate, metrics, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
-    f_psd, _, psd_data_dict = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
-    return f_trace, f_psd, psd_data_dict
+    f_psd, _, f_diff, _, psd_data_dict = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
+    return f_trace, f_psd, f_diff, psd_data_dict
 
 # - - -- --- ----- -------- ----- --- -- - -
 # - - --  a better analysis function  -- - -
@@ -487,5 +491,5 @@ def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,
     stat_table, metric_dict = compute_metric_table(test_data,recon,model_dir_path)
     print('Generating test plots...')
     f_trace, _ = plot_test_data_fits(recon, test_data, ar_model_dict, test_data_mask, n, srate, metric_dict, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
-    f_psd, _, psd_data_dict = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
-    return stat_table, metric_dict, test_data_mask, f_trace, f_psd, psd_data_dict
+    f_psd, _, f_diff, _, psd_data_dict = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
+    return stat_table, metric_dict, test_data_mask, f_trace, f_psd, f_diff, psd_data_dict
