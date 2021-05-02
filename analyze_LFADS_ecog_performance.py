@@ -59,10 +59,7 @@ def save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path):
     f_loss.savefig(os.path.join(fig_path,'loss.png'))
     f_loss.savefig(os.path.join(fig_path,'loss.svg'))
 
-def main():
-    t_start = time.time()
-    args = parser.parse_args()
-    model_dir_path, dataset_path, ar_model_path, hyperparameter_path = get_paths(args)
+def analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path):
     ar_model_dict = get_ar_model(ar_model_path)
     # metric_stat_table_row, metrics, test_data_mask = get_model_performance_stat_table(model_dir_path, dataset_path, hyperparameter_path)
     # f_trace, f_psd = model_visualization(model_dir_path, dataset_path, hyperparameter_path,None,n_trace, srate,n_boot,metrics)
@@ -74,8 +71,11 @@ def main():
     save_performance_table(model_dir_path, metric_stat_table_row)
     # save figures
     save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path)
-    t_end = time.time()
-    print(f'assessment complete. runtime: {t_end-t_start}\n')
 
 if __name__ == "__main__":
-    main()
+    t_start = time.time()
+    args = parser.parse_args()
+    model_dir_path, dataset_path, ar_model_path, hyperparameter_path = get_paths(args)
+    analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path)
+    t_end = time.time()
+    print(f'assessment complete. runtime: {t_end-t_start}\n')
