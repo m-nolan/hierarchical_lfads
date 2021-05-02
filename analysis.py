@@ -446,6 +446,8 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     ax.plot(f_psd, 10*np.log10(recon_psd_mean), label='recon. mean');
     ax.fill_between(f_ar_psd, 10*np.log10(ar_psd_95ci[0,:]), 10*np.log10(ar_psd_95ci[1,:]), alpha=0.2, label='AR 95% ci')
     ax.plot(f_ar_psd, 10*np.log10(ar_psd_mean), label='AR mean')
+    ax.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err. 95% ci')
+    ax.plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='err. mean')
     ax.legend(loc=0)
     fig_diff, ax_diff = plt.subplots(1,1,dpi=100)
     ax_diff.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err 95% ci')
