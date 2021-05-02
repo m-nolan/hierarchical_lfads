@@ -455,7 +455,14 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     ax.set_ylabel('PSD (dBu)')
     ax.set_title('Power Spectral Density, Data v. Reconstruction')
     ax.set_xlim(0,100)
-    return fig, ax
+    return fig, ax, {'data_psd_mean': data_psd_mean,
+                     'data_psd_95ci': data_psd_95ci,
+                     'recon_psd_mean': recon_psd_mean,
+                     'recon_psd_95ci': recon_psd_95ci,
+                     'ar_psd_mean': ar_psd_mean,
+                     'ar_psd_95ci': ar_psd_95ci,
+                     'f_psd': f_psd,
+                     'f_ar_psd': f_ar_psd}
 
 def model_visualization(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,srate,n_boot,metrics):
     print(f'loading model from:\t{model_dir_path}')
@@ -464,8 +471,8 @@ def model_visualization(model_dir_path,data_path,hyperparameter_path,ar_model_di
     recon, factors, generators = compute_model_outputs(model,torch.tensor(test_data))
     print('Generating test plots...')
     f_trace, _ = plot_test_data_fits(recon, test_data, ar_model_dict, test_data_mask, n, srate, metrics, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
-    f_psd, _ = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
-    return f_trace, f_psd
+    f_psd, _, psd_data_dict = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
+    return f_trace, f_psd, psd_data_dict
 
 # - - -- --- ----- -------- ----- --- -- - -
 # - - --  a better analysis function  -- - -
@@ -480,5 +487,5 @@ def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,
     stat_table, metric_dict = compute_metric_table(test_data,recon,model_dir_path)
     print('Generating test plots...')
     f_trace, _ = plot_test_data_fits(recon, test_data, ar_model_dict, test_data_mask, n, srate, metric_dict, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
-    f_psd, _ = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
-    return stat_table, metric_dict, test_data_mask, f_trace, f_psd
+    f_psd, _, psd_data_dict = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
+    return stat_table, metric_dict, test_data_mask, f_trace, f_psd, psd_data_dict
