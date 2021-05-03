@@ -449,6 +449,7 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     ax.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err. 95% ci')
     ax.plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='err. mean')
     ax.legend(loc=0)
+    # consider changing this to relative error distribution instead of a straight residual.
     fig_diff, ax_diff = plt.subplots(1,1,dpi=100)
     ax_diff.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err 95% ci')
     ax_diff.plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='err mean')

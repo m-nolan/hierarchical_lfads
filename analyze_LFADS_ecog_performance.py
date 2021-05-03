@@ -71,6 +71,11 @@ def analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path):
     save_performance_table(model_dir_path, metric_stat_table_row)
     # save figures
     save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path)
+    # close figures to prevent "you have too many figures" warning when looped over multiple directories
+    f_trace.close()
+    f_psd.close()
+    f_diff.close()
+    f_loss.close()
 
 if __name__ == "__main__":
     t_start = time.time()

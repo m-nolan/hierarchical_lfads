@@ -13,10 +13,11 @@ overwrite = False
 
 def get_gw_250_42ch_model_list():
     model_parent_directory = r"D:\Users\mickey\Data\models\pyt\lfads\gw_250\lfads_ecog"
-    model_re = "cenc[0-9]*_cont[0-9]*_fact[0-9]*_genc1024_gene1024_glat1024_nch42_seqlen[0-9]*_ulat[0-9]*_orion*"
+    model_re = "cenc[0-9]*_cont[0-9]*_fact[0-9]*_genc[0-9]*_gene[0-9]*_glat[0-9]*_nch42_seqlen[0-9]*_ulat[0-9]*_orion*"
     model_dir_list = glob(os.path.join(model_parent_directory,model_re))
     return model_dir_list
 
+# refactor this! This is a spaghetti code. Don't make spaghetti, make tasty gnocchi!
 if __name__ == "__main__":
     t_start = time.time()
     model_dir_list = get_gw_250_42ch_model_list()
