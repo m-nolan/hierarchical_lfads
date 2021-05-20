@@ -1,8 +1,10 @@
 import torch
+from torch._C import dtype
 from torch.nn.parallel.data_parallel import DataParallel
 from statsmodels.tsa.api import VAR
 from tensorboard.backend.event_processing import event_accumulator
 import numpy as np
+from scipy.signal import welch, detrend
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -246,7 +248,7 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def load_configure_model_data(model_dir_path,data_path,hyperparameter_path,std_thresh=0.5):
+def load_configure_model_data(model_dir_path,data_path,hyperparameter_path,std_thresh=0.5,test_seq_len=None,adjust_test_set_size=True,dec=None):
     model_name, data_suffix, n_ch, seq_len = get_model_params(model_dir_path)
     batch_size = 1000
     device = 'cpu'
@@ -269,12 +271,23 @@ def load_configure_model_data(model_dir_path,data_path,hyperparameter_path,std_t
         model.g_posterior_mean = checkpoint['net']['module.g_posterior_mean']
         model.g_posterior_logvar = checkpoint['net']['module.g_posterior_logvar']
     # grab data
+    train_seq_len = seq_len
+    if test_seq_len:
+        seq_len = test_seq_len
+    else:
+        test_seq_len = seq_len
     if n_ch <= 32:
         test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,10:10+n_ch],dtype=np.float32)
     else:
         test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,:n_ch],dtype=np.float32)
     test_data_mask = test_data.std(axis=(1,2)) < std_thresh
     test_data = test_data[~test_data_mask,:,:]
+    if test_seq_len > train_seq_len and adjust_test_set_size:
+        new_size = int(np.round(test_data.shape[0]*train_seq_len/test_seq_len))
+        test_data = test_data[:new_size,]
+    if dec:
+        new_size = int(np.round(test_data.shape[0] / dec))
+        test_data = test_data[:new_size,]
     return model.to('cpu'), test_data, test_data_mask
 
 #-------------------------------------------------------------------
@@ -400,12 +413,14 @@ def plot_test_data_fits(recon,test_data,ar_model_dict,test_data_mask,n,srate,met
     n_c = int(np.ceil(n/n_r))
     fig, ax = plt.subplots(n_r,n_c,dpi=150,constrained_layout=True,sharex=True,figsize=(6,6))
     ax = ax.reshape(-1)
+    plot_ar = not (ar_model_dict is None)
     for idx, t_idx in enumerate(trial_idx):
         r_idx = idx // n_c
         c_idx = idx % n_c
         ax[idx].plot(time,test_data[t_idx,:,0],label='target')
         ax[idx].plot(time,recon['data'][t_idx,:,0],label='recon.')
-        ax[idx].plot(time[ar_model_dict['ord']:],ar_model_dict['test_pred'][~test_data_mask,:,:][t_idx,:(n_time-ar_model_dict['ord']),0],label='AR')
+        if plot_ar:
+            ax[idx].plot(time[ar_model_dict['ord']:],ar_model_dict['test_pred'][~test_data_mask,:,:][t_idx,:(n_time-ar_model_dict['ord']),0],label='AR')
         if r_idx == n_r - 1:
             ax[idx].set_xlabel('time (s)')
         if c_idx == 0:
@@ -420,12 +435,15 @@ def plot_test_data_fits(recon,test_data,ar_model_dict,test_data_mask,n,srate,met
 
 def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot):
     # power features
-    from scipy.signal import welch, detrend
+    plot_ar = not (ar_model_dict is None)
     trial_mask = test_data[:,:,0].std(axis=1) < 0.5
     f_psd, data_psd = welch(detrend(test_data[~trial_mask,],type='linear',axis=-2),fs=srate,axis=1) # why axis=-2? multiple batch acceptance? Weird
     _, recon_psd = welch(detrend(recon['data'][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
     _, diff_psd = welch(detrend(test_data[~trial_mask,]-recon['data'][~trial_mask,].numpy(),type='linear',axis=-2),fs=srate,axis=1)
-    f_ar_psd, ar_psd = welch(detrend(ar_model_dict['test_pred'][~test_data_mask,][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
+    if plot_ar:
+        f_ar_psd, ar_psd = welch(detrend(ar_model_dict['test_pred'][~test_data_mask,][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
+    else:
+        f_ar_psd = None
     f_est = lambda x: x.mean(axis=0)
     data_psd_bsd = bootstrap_est(data_psd[:,:,0], n_boot, f_est) # all of this is JUST THE 1st CHANNEL? Why? Fix that later.
     data_psd_mean = data_psd_bsd.mean(axis=0)
@@ -433,9 +451,13 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     recon_psd_bsd = bootstrap_est(recon_psd[:,:,0], n_boot, f_est)
     recon_psd_mean = recon_psd_bsd.mean(axis=0)
     recon_psd_95ci = np.percentile(recon_psd_bsd,[2.5, 97.5],axis=0)
-    ar_psd_bsd = bootstrap_est(ar_psd[:,:,0], n_boot, f_est)
-    ar_psd_mean = ar_psd_bsd.mean(axis=0)
-    ar_psd_95ci = np.percentile(ar_psd_bsd,[2.5,97.5],axis=0)
+    if plot_ar:
+        ar_psd_bsd = bootstrap_est(ar_psd[:,:,0], n_boot, f_est)
+        ar_psd_mean = ar_psd_bsd.mean(axis=0)
+        ar_psd_95ci = np.percentile(ar_psd_bsd,[2.5,97.5],axis=0)
+    else:
+        ar_psd_mean = []
+        ar_psd_95ci = []
     diff_psd_bsd = bootstrap_est(diff_psd[:,:,0],n_boot,f_est)
     diff_psd_mean = diff_psd_bsd.mean(axis=0)
     diff_psd_95ci = np.percentile(diff_psd_bsd,[2.5, 97.5],axis=0)
@@ -444,8 +466,9 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
     ax.plot(f_psd, 10*np.log10(data_psd_mean), label='data mean');
     ax.fill_between(f_psd, 10*np.log10(recon_psd_95ci[0,:]), 10*np.log10(recon_psd_95ci[1,:]),alpha=0.2,label='recon. 95% ci')
     ax.plot(f_psd, 10*np.log10(recon_psd_mean), label='recon. mean');
-    ax.fill_between(f_ar_psd, 10*np.log10(ar_psd_95ci[0,:]), 10*np.log10(ar_psd_95ci[1,:]), alpha=0.2, label='AR 95% ci')
-    ax.plot(f_ar_psd, 10*np.log10(ar_psd_mean), label='AR mean')
+    if plot_ar:
+        ax.fill_between(f_ar_psd, 10*np.log10(ar_psd_95ci[0,:]), 10*np.log10(ar_psd_95ci[1,:]), alpha=0.2, label='AR 95% ci')
+        ax.plot(f_ar_psd, 10*np.log10(ar_psd_mean), label='AR mean')
     ax.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err. 95% ci')
     ax.plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='err. mean')
     ax.legend(loc=0)
@@ -487,9 +510,9 @@ def model_visualization(model_dir_path,data_path,hyperparameter_path,ar_model_di
 # - - --  a better analysis function  -- - -
 # - - -- --- ----- -------- ----- --- -- - -
 
-def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,srate,n_boot):
+def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,srate,n_boot,dec=None):
     print(f'loading model from:\t{model_dir_path}')
-    model, test_data, test_data_mask = load_configure_model_data(model_dir_path,data_path,hyperparameter_path)
+    model, test_data, test_data_mask = load_configure_model_data(model_dir_path,data_path,hyperparameter_path,dec=dec)
     print('computing test data reconstructions...')
     recon, factors, generators = compute_model_outputs(model,torch.tensor(test_data))
     print('computing metric statistics...')

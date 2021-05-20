@@ -33,8 +33,11 @@ def get_paths(args):
     return model_dir, dataset_path, ar_model_path, hyperparameter_path
 
 def get_ar_model(ar_model_path):
-    with open(ar_model_path,'rb') as f:
-        ar_model_dict = pkl.load(f)
+    if ar_model_path:
+        with open(ar_model_path,'rb') as f:
+            ar_model_dict = pkl.load(f)
+    else:
+        ar_model_dict = None
     return ar_model_dict
 
 def save_performance_table(model_dir_path,metric_stat_table_row):
@@ -59,23 +62,23 @@ def save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path):
     f_loss.savefig(os.path.join(fig_path,'loss.png'))
     f_loss.savefig(os.path.join(fig_path,'loss.svg'))
 
-def analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path):
+def analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path, dec=None):
     ar_model_dict = get_ar_model(ar_model_path)
     # metric_stat_table_row, metrics, test_data_mask = get_model_performance_stat_table(model_dir_path, dataset_path, hyperparameter_path)
     # f_trace, f_psd = model_visualization(model_dir_path, dataset_path, hyperparameter_path,None,n_trace, srate,n_boot,metrics)
-    metric_stat_table_row, metrics, test_data_mak, f_trace, f_psd, f_diff, psd_data_dict = model_analysis(
+    metric_stat_table_row, metrics, test_data_mask, f_trace, f_psd, f_diff, psd_data_dict = model_analysis(
         model_dir_path, dataset_path, hyperparameter_path, ar_model_dict, n_trace, 
-        srate, n_boot)
+        srate, n_boot, dec)
     f_loss, loss_data = plot_loss_curves(model_dir_path)
     # save performance table
     save_performance_table(model_dir_path, metric_stat_table_row)
     # save figures
     save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path)
     # close figures to prevent "you have too many figures" warning when looped over multiple directories
-    f_trace.close()
-    f_psd.close()
-    f_diff.close()
-    f_loss.close()
+    plt.close(f_trace)
+    plt.close(f_psd)
+    plt.close(f_diff)
+    plt.close(f_loss)
 
 if __name__ == "__main__":
     t_start = time.time()
