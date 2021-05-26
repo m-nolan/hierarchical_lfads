@@ -87,6 +87,8 @@ def main():
         save_loc = save_loc + '-fdl'
     if args.use_fdl and args.block_tdl:
         save_loc = save_loc + 'only'
+    if args.loss == 'l1':
+        save_loc = save_loc + 'l1'
     save_loc = save_loc + os.sep
     
     save_parameters(save_loc, hyperparams)
