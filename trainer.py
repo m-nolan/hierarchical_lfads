@@ -12,7 +12,7 @@ class RunManager():
     def __init__(self, model, objective, optimizer, scheduler,
                  train_dl, valid_dl, transforms,
                  plotter=None, writer=None, do_health_check=False, detect_local_minima = False,
-                 max_epochs=1000, save_loc = '/tmp/', load_checkpoint=False):
+                 max_epochs=1000, save_loc = '/tmp/', load_checkpoint=False, mode='recon'):
     
         self.device     = 'cuda' if torch.cuda.is_available() else 'cpu';
         self.model      = model
@@ -40,6 +40,8 @@ class RunManager():
         
         if load_checkpoint:
             self.load_checkpoint('recent')
+        assert mode in ['recon','pred'], 'mode variable must be ''recon'' or ''pred''.'
+        self.mode = mode
             
     def run(self):  
         for epoch in range(self.epoch, self.max_epochs):
@@ -53,15 +55,17 @@ class RunManager():
 #             print(len(self.train_dl))
             for i,x in enumerate(self.train_dl):
                 tr_tic = time.time()
-#                 print(x[0].session)
-                if isinstance(x, list) or isinstance(x,tuple):
-                    x = x[0]
+                src = x[0]
+                if self.mode == 'recon':
+                    trg = x[0]
+                elif self.mode == 'pred':
+                    trg = x[1]
                 self.optimizer.zero_grad()
                 fw_tic = time.time()
-                recon, latent = self.model(x)
+                recon, latent = self.model(src)
 #                 print('fw time: ', time.time()-fw_tic)
                 loss_tic = time.time()
-                loss, loss_dict = self.objective(x_orig= x,
+                loss, loss_dict = self.objective(x_orig= trg,
                                                  x_recon= recon,
                                                  model= self.model)
 #                 print('loss time: ', time.time()-loss_tic)
@@ -105,7 +109,6 @@ class RunManager():
             #    break
             
             
-            train_data = x.clone()
             loss_dict = {} 
             
             for d in loss_dict_list: 
@@ -127,15 +130,18 @@ class RunManager():
 #             print(len(self.valid_dl))
             for i, x in enumerate(self.valid_dl):
                 with torch.no_grad():
-                    if isinstance(x, list) or isinstance(x,tuple):
-                        x = x[0]
+                    src = x[0]
+                    if self.mode == 'recon':
+                        trg = x[0]
+                    elif self.mode == 'pred':
+                        trg = x[1]
+                    
                     fw_val_tic = time.time()
-                    recon, latent = self.model(x)
+                    recon, latent = self.model(src)
 #                     print('fw val time: ',time.time()-fw_val_tic)
-                    loss, loss_dict = self.objective(x_orig= x, x_recon= recon, model= self.model)
+                    loss, loss_dict = self.objective(x_orig= trg, x_recon= recon, model= self.model)
                     loss_dict_list.append(loss_dict)
                     
-            valid_data = x.clone()
             loss_dict = {} 
             for d in loss_dict_list: 
                 for k in d.keys(): 
