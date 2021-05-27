@@ -622,8 +622,9 @@ def generate_save_loc(args, hyperparams, orion_hp_string):
     mhp_list.sort()
     hyperparams['run_name'] = '_'.join(mhp_list)
     hyperparams['run_name'] += orion_hp_string
-    save_loc = '%s/%s/%s/%s/'%(args.output_dir, data_name, model_name, hyperparams['run_name'])
-    save_loc = save_loc + '-pred'
+    save_loc = os.path.join(args.output_dir, data_name, model_name, hyperparams['run_name'])
+    # save_loc = '%s/%s/%s/%s/'%(args.output_dir, data_name, model_name, hyperparams['run_name'])
+    save_loc = save_loc + '-pred' + os.path.pathsep
     return save_loc, hyperparams
 
 #-------------------------------------------------------------------
