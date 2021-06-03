@@ -278,17 +278,22 @@ def load_configure_model_data(model_dir_path,data_path,hyperparameter_path,std_t
         test_seq_len = seq_len
     if n_ch <= 32:
         test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,10:10+n_ch],dtype=np.float32)
+        test_data_fwd = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,10:10+n_ch],dtype=np.float32)
     else:
         test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,:n_ch],dtype=np.float32)
+        test_data = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,:n_ch],dtype=np.float32)
     test_data_mask = test_data.std(axis=(1,2)) < std_thresh
     test_data = test_data[~test_data_mask,:,:]
+    test_data_fwd = test_data_fwd[~test_data_mask,:,:]
     if test_seq_len > train_seq_len and adjust_test_set_size:
         new_size = int(np.round(test_data.shape[0]*train_seq_len/test_seq_len))
         test_data = test_data[:new_size,]
+        test_data_fwd = test_data_fwd[:new_size,]
     if dec:
         new_size = int(np.round(test_data.shape[0] / dec))
         test_data = test_data[:new_size,]
-    return model.to('cpu'), test_data, test_data_mask
+        test_data_fwd = test_data_fwd[:new_size,]
+    return model.to('cpu'), test_data, test_data_fwd, test_data_mask
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
@@ -510,14 +515,18 @@ def model_visualization(model_dir_path,data_path,hyperparameter_path,ar_model_di
 # - - --  a better analysis function  -- - -
 # - - -- --- ----- -------- ----- --- -- - -
 
-def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,srate,n_boot,dec=None):
+def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,srate,n_boot,dec=None,pred=False):
     print(f'loading model from:\t{model_dir_path}')
     model, test_data, test_data_mask = load_configure_model_data(model_dir_path,data_path,hyperparameter_path,dec=dec)
+    if pred:
+        target_data = test_data_fwd
+    else:
+        target_data = test_data
     print('computing test data reconstructions...')
     recon, factors, generators = compute_model_outputs(model,torch.tensor(test_data))
     print('computing metric statistics...')
-    stat_table, metric_dict = compute_metric_table(test_data,recon,model_dir_path)
+    stat_table, metric_dict = compute_metric_table(target_data,recon,model_dir_path)
     print('Generating test plots...')
-    f_trace, _ = plot_test_data_fits(recon, test_data, ar_model_dict, test_data_mask, n, srate, metric_dict, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
-    f_psd, _, f_diff, _, psd_data_dict = plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, srate, n_boot)
+    f_trace, _ = plot_test_data_fits(recon, target_data, ar_model_dict, test_data_mask, n, srate, metric_dict, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
+    f_psd, _, f_diff, _, psd_data_dict = plot_test_data_fits_psd(recon, target_data, ar_model_dict, test_data_mask, srate, n_boot)
     return stat_table, metric_dict, test_data_mask, f_trace, f_psd, f_diff, psd_data_dict
