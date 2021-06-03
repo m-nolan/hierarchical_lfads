@@ -281,7 +281,7 @@ def load_configure_model_data(model_dir_path,data_path,hyperparameter_path,std_t
         test_data_fwd = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,10:10+n_ch],dtype=np.float32)
     else:
         test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,:n_ch],dtype=np.float32)
-        test_data = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,:n_ch],dtype=np.float32)
+        test_data_fwd = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,:n_ch],dtype=np.float32)
     test_data_mask = test_data.std(axis=(1,2)) < std_thresh
     test_data = test_data[~test_data_mask,:,:]
     test_data_fwd = test_data_fwd[~test_data_mask,:,:]
@@ -517,7 +517,7 @@ def model_visualization(model_dir_path,data_path,hyperparameter_path,ar_model_di
 
 def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,srate,n_boot,dec=None,pred=False):
     print(f'loading model from:\t{model_dir_path}')
-    model, test_data, test_data_mask = load_configure_model_data(model_dir_path,data_path,hyperparameter_path,dec=dec)
+    model, test_data, test_data_fwd, test_data_mask = load_configure_model_data(model_dir_path,data_path,hyperparameter_path,dec=dec)
     if pred:
         target_data = test_data_fwd
     else:

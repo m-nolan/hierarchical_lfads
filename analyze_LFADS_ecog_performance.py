@@ -15,6 +15,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--model_dir',type=str,required=True)
 parser.add_argument('--ar_model',type=str,required=True)
 parser.add_argument('--dataset',type=str,required=True)
+parser.add_argument('--pred',action='store_true',default=False)
 
 n_trace = 6
 srate = 250
@@ -62,13 +63,13 @@ def save_figures(f_trace,f_psd,f_diff,f_loss,psd_data_dict,model_dir_path):
     f_loss.savefig(os.path.join(fig_path,'loss.png'))
     f_loss.savefig(os.path.join(fig_path,'loss.svg'))
 
-def analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path, dec=None):
+def analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path, dec=None, pred=False):
     ar_model_dict = get_ar_model(ar_model_path)
     # metric_stat_table_row, metrics, test_data_mask = get_model_performance_stat_table(model_dir_path, dataset_path, hyperparameter_path)
     # f_trace, f_psd = model_visualization(model_dir_path, dataset_path, hyperparameter_path,None,n_trace, srate,n_boot,metrics)
     metric_stat_table_row, metrics, test_data_mask, f_trace, f_psd, f_diff, psd_data_dict = model_analysis(
         model_dir_path, dataset_path, hyperparameter_path, ar_model_dict, n_trace, 
-        srate, n_boot, dec)
+        srate, n_boot, dec, pred)
     f_loss, loss_data = plot_loss_curves(model_dir_path)
     # save performance table
     save_performance_table(model_dir_path, metric_stat_table_row)
@@ -84,6 +85,6 @@ if __name__ == "__main__":
     t_start = time.time()
     args = parser.parse_args()
     model_dir_path, dataset_path, ar_model_path, hyperparameter_path = get_paths(args)
-    analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path)
+    analyze(model_dir_path, dataset_path, ar_model_path, hyperparameter_path,pred=args.pred)
     t_end = time.time()
     print(f'assessment complete. runtime: {t_end-t_start}\n')

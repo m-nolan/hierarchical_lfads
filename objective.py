@@ -124,6 +124,31 @@ class SVLAE_Loss(Base_Loss):
 
         return loss, loss_dict
 
+class LFADS_Wasserstein_Loss(Base_Loss):
+    '''
+    Wasserstein Loss module a la WGAN ()
+
+    Estimates a distribution-specific discriminator for estimating neural signal processes
+    '''
+    def __init__(self,n_sample,n_ch,n_hidden):
+
+        self.n_sample = n_sample
+        self.n_ch = n_ch
+        self.n_hidden = n_hidden
+
+        self.wl_module = nn.Sequential(
+            nn.Linear(n_sample*n_ch,n_hidden),
+            nn.ReLU(),
+            nn.Linear(n_hidden,1)
+        )
+
+    def forward(self,trg,pred):
+        assert pred.shape[0] == trg.shape[0], "trg, pred batch sizes are not equal."
+        d_pred = self.wl_module(pred.reshape(pred.shape[0],-1))
+        d_trg = self.wl_module(trg.reshape(trg.shape[0],-1))
+        d_loss = -(d_pred.mean(axis=0) - d_trg.mean(axis=0))
+        return d_loss
+
 class LFADS_Loss(Base_Loss):
     def __init__(self, loglikelihood,
                  use_fdl = False,

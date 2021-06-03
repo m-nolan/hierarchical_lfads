@@ -12,7 +12,7 @@ import torchvision.transforms as trf
 from torch.utils.data.dataset import Dataset
 import pickle
 
-from orion.client import report_results
+# from orion.client import report_results
 
 from dataset import EcogTensorDataset, DropChannels
 
@@ -175,7 +175,7 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       dt= data_dict['dt']
                                       )
 
-    if model_name == 'lfads_ecog':
+    elif model_name == 'lfads_ecog':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
         model, objective = prep_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
@@ -187,6 +187,15 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       attention=attention,
                                       use_fdl=use_fdl,
                                       use_tdl=use_tdl)
+    
+    elif model_name == 'lfads_wass_ecog':
+        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
+        model, objective = prep_lfads_ecog_wass(input_dims=input_dims, 
+                                                n_sample = seq_len, 
+                                                hidden_dims= 1024, 
+                                                hyperparams=hyperparams, 
+                                                device=device, 
+                                                multidevice=multidevice)
         
     elif model_name == 'svlae':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
@@ -286,6 +295,49 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
     loglikelihood = LogLikelihoodGaussian(mse=mse)
 
     objective = LFADS_Loss(loglikelihood            = loglikelihood,
+                           use_fdl                  = use_fdl,
+                           use_tdl                  = use_tdl,
+                           loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
+                                                       'l2': hyperparams['objective']['l2']},
+                           l2_con_scale             = hyperparams['objective']['l2_con_scale'],
+                           l2_gen_scale             = hyperparams['objective']['l2_gen_scale']).to(device)
+
+    return model, objective
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def prep_lfads_ecog_wass(input_dims, n_sample, hidden_dims, hyperparams, device, multidevice, use_fdl=False, use_tdl=True):
+    from objective import LFADS_Loss, LFADS_Wasserstein_Loss
+    from lfads import LFADS_Ecog_SingleSession_Net
+
+    model = LFADS_Ecog_SingleSession_Net(input_size           = input_dims,
+                                    factor_size          = hyperparams['model']['factor_size'],
+                                    g_encoder_size       = hyperparams['model']['g_encoder_size'],
+                                    c_encoder_size       = hyperparams['model']['c_encoder_size'],
+                                    g_latent_size        = hyperparams['model']['g_latent_size'],
+                                    u_latent_size        = hyperparams['model']['u_latent_size'],
+                                    controller_size      = hyperparams['model']['controller_size'],
+                                    generator_size       = hyperparams['model']['generator_size'],
+                                    prior                = hyperparams['model']['prior'],
+                                    clip_val             = hyperparams['model']['clip_val'],
+                                    dropout              = hyperparams['model']['dropout'],
+                                    do_normalize_factors = hyperparams['model']['normalize_factors'],
+                                    max_norm             = hyperparams['model']['max_norm'],
+                                    device               = device)
+    
+    if multidevice and torch.cuda.device_count() > 1:
+        model = DataParallelPassthrough(model)
+
+    model.to(device)
+    
+    wass_ll = LFADS_Wasserstein_Loss(
+        n_sample = n_sample,
+        n_ch = input_dims,
+        n_hidden = hidden_dims
+    )
+
+    objective = LFADS_Loss(loglikelihood            = wass_ll,
                            use_fdl                  = use_fdl,
                            use_tdl                  = use_tdl,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
