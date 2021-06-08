@@ -1,5 +1,7 @@
 import torch
 import torchvision
+from scipy.stats import zscore
+import scipy.signal as sps
 from math import floor
 # from torch.utils.data.dataloader import _DataLoaderIter
 
@@ -68,7 +70,7 @@ class EcogTensorDataset(torch.utils.data.Dataset):
     """
 
     def __init__(self, *tensors, device='cpu', transform=None):
-        assert all(tensors[0].size(0) == tensor.size(0) for tensor in tensors)
+        assert all(tensors[0].shape[0] == tensor.shape[0] for tensor in tensors)
         self.tensors = tensors
         self.device = device
         self.transform = transform
@@ -81,6 +83,7 @@ class EcogTensorDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return self.tensors[0].size(0)
+
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
@@ -103,3 +106,71 @@ class DropChannels(object):
         sample[:,drop_ch_idx] = 0.
         return sample
     
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+# data filtering transform
+class FilterData(object):
+    '''
+        Dataset transform to filter data samples. Any number of filter bands are allowed. Each filter is interpreted as a bandpass filter requiring 2 corner frequencies.
+        A fixed-order IIR filter is used to filter data to each given window.
+        Samples are interpreted as a [time x n_ch x ...] tensor and are filtered along the first dimension (pre-batch). 
+        Dataset filtered samples are returned in a tuple.
+
+        Inputs:
+            - w:    List-like of normalized frequency windows defining each data filter. Each window is defined by a 2-element array or list.
+            - n:    IIR filter order.
+
+        Outputs:
+            - samples:  List of filtered samples, as defined by w.
+    '''
+
+    def __init__(self,w,n,padlen=49,normalize=True):
+        self.w = w
+        self.n = n
+        self.padlen = padlen
+        self.normalize = normalize
+
+        # parse w
+        # -- add this when you consider using variably-formatted 
+        
+        # create array of filters
+        self.filters = []
+        self.btypes = []
+        for idx, _w in enumerate(self.w):
+            if len(_w) < 2:
+                if idx == 0:
+                    btype = 'lowpass'
+                elif idx == len(self.w) - 1:
+                    btype = 'highpass'
+            else:
+                btype = 'bandpass'
+            self.filters.append(
+                sps.iirfilter(
+                    self.n,
+                    _w,
+                    btype=btype,
+                    rs=60,
+                    ftype='butter',     # consider 'bessel' if group delays are an issue
+                    output='sos'
+                    )
+                )
+            self.btypes.append(btype)
+
+    def __call__(self,sample):
+        samples_filt = []
+        for idx, f in enumerate(self.filters):
+            samples_filt.append(
+                torch.tensor(sps.sosfiltfilt( # this type conversion may not be necessary
+                    f,
+                    sample,
+                    axis=0,
+                    padlen=self.padlen
+                    ).copy()
+                ))
+            if self.btypes[idx] == 'lowpass':
+                None
+            else:
+                samples_filt[-1] -= samples_filt[-1].mean(dim=0)
+            if self.normalize:
+                samples_filt[-1] = torch.tensor(zscore(samples_filt[-1],axis=0))
+        return samples_filt
