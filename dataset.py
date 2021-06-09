@@ -1,3 +1,4 @@
+from typing import Iterable
 import torch
 import torchvision
 from scipy.stats import zscore
@@ -69,21 +70,38 @@ class EcogTensorDataset(torch.utils.data.Dataset):
         *tensors (Tensor): tensors that have the same size of the first dimension.
     """
 
-    def __init__(self, *tensors, device='cpu', transform=None):
+    def __init__(self, *tensors, device='cpu', transform=None, transform_mask=None):
         assert all(tensors[0].shape[0] == tensor.shape[0] for tensor in tensors)
         self.tensors = tensors
         self.device = device
         self.transform = transform
+        if transform_mask:
+            assert len(self.tensors) == len(transform_mask), f'transform_mask length ({len(transform_mask)}) must match number of tensors ({len(tensors)}).'
+        else:
+            transform_mask = [True] * len(self.tensors) # all-hot mask
+        self.transform_mask = transform_mask
+
 
     def __getitem__(self, index):
-        sample = tuple(tensor[index].to(self.device) for tensor in self.tensors)
+        # get samples
+        sample = [tensor[index] for tensor in self.tensors]
+        # apply transform
         if self.transform:
-            sample = tuple(self.transform(s) for s in sample)
+            for idx, s in enumerate(sample):
+                if self.transform_mask[idx]:
+                    sample[idx] = self.transform(s)
+        # assign device
+        list_or_tuple_recursive_to(sample,self.device)
         return sample
 
     def __len__(self):
         return self.tensors[0].size(0)
 
+def list_or_tuple_recursive_to(x,device):
+    if isinstance(x,(list,tuple)):
+        [list_or_tuple_recursive_to(_x,device) for _x in x]
+    else:
+        x.to(device)
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
@@ -109,7 +127,7 @@ class DropChannels(object):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 # data filtering transform
-class FilterData(object):
+class FilterData(torch.nn.Module):
     '''
         Dataset transform to filter data samples. Any number of filter bands are allowed. Each filter is interpreted as a bandpass filter requiring 2 corner frequencies.
         A fixed-order IIR filter is used to filter data to each given window.
@@ -125,6 +143,7 @@ class FilterData(object):
     '''
 
     def __init__(self,w,n,padlen=49,normalize=True):
+        super(FilterData, self).__init__()
         self.w = w
         self.n = n
         self.padlen = padlen
@@ -156,7 +175,7 @@ class FilterData(object):
                 )
             self.btypes.append(btype)
 
-    def __call__(self,sample):
+    def forward(self,sample):
         samples_filt = []
         for idx, f in enumerate(self.filters):
             samples_filt.append(

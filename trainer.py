@@ -61,6 +61,7 @@ class RunManager():
                 elif self.mode == 'pred':
                     trg = x[1]
                 self.optimizer.zero_grad()
+                breakpoint()
                 fw_tic = time.time()
                 recon, latent = self.model(src)
 #                 print('fw time: ', time.time()-fw_tic)

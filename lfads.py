@@ -372,6 +372,65 @@ class LFADS_Net(nn.Module):
                                           prior_mu = self.u_prior_mean,
                                           prior_lv = self.u_prior_logvar)
         return kl
+
+class LFADS_Multiblock_Net(nn.Module):
+    '''
+        Similar to the LFADS_Net, but implementing multiple encoder/generator pair RNN cells in parallel for multiband processing.
+    '''
+    def __init__(self,input_size, factor_size = 4,
+                 g_encoder_size  = 64, c_encoder_size = 64,
+                 g_latent_size   = 64, u_latent_size  = 1,
+                 controller_size = 64, generator_size = 64,
+                 n_block = 2,
+                 prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
+                                  'var'  : {'value': 0.1, 'learnable' : False}},
+                          'u'  : {'mean' : {'value': 0.0, 'learnable' : False},
+                                  'var'  : {'value': 0.1, 'learnable' : True},
+                                  'tau'  : {'value': 10,  'learnable' : True}}},
+                 clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
+                 do_normalize_factors=True, factor_bias = False, device='cpu'):
+
+        super(LFADS_Multiblock_Net, self).__init__()
+        # create n_block different LFADS_Net objects, define the forward pass to give a different input to each.
+        lfads_blocks = []
+        for block_idx in range(n_block):
+            lfads_blocks.append(
+                LFADS_Ecog_SingleSession_Net(
+                    input_size=input_size, 
+                    factor_size=factor_size,
+                    g_encoder_size=g_encoder_size, 
+                    c_encoder_size=c_encoder_size,
+                    g_latent_size=g_latent_size, 
+                    u_latent_size=u_latent_size,
+                    controller_size=controller_size, 
+                    generator_size=generator_size,
+                    prior=prior,
+                    clip_val=clip_val, 
+                    dropout=dropout, 
+                    max_norm=max_norm, 
+                    deep_freeze=deep_freeze,
+                    do_normalize_factors=do_normalize_factors, 
+                    factor_bias=factor_bias, 
+                    device=device
+                )
+            )
+        self.lfads_blocks = nn.ModuleList(lfads_blocks)
+        # create linear net to mix LFADS block outputs
+        # self.out_mix = nn.Linear(in_features = n_block * input_size, out_features = input_size, bias=False)
+        self.out_mix = nn.Linear(in_features=n_block, out_features=1, bias=True) # stack block outputs in a new dimension then mix along that axis then squeeze.
+    def forward(self,src,trg):
+        assert len(src) == len(self.lfads_blocks), f'input sample must be a list-like of length equal to the number of model blocks. {len(src)} sample elements found, {len(self.lfads_blocks)} expected.'
+        block_outputs = []
+        for idx, lb in enumerate(self.lfads_blocks):
+            _recon, _ = lb(src[idx])
+            block_outputs.append(_recon['data'])
+        breakpoint()
+        block_outputs = torch.stack(block_outputs,dim=1) # too much data to hold onto, overwriting
+        pred = self.out_mix(block_outputs)
+        pred = pred.squeeze(dim=1)
+        # omit factor returns for now, return block_outputs later.
+        return pred
+
     
 class LFADS_SingleSession_Net(LFADS_Net):
     
