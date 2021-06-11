@@ -171,7 +171,7 @@ def prep_model(model_name, data_records, data_suffix, batch_size, device, hyperp
         model, objective = prep_multiblock_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
-                                      dtype=train_dl.dataset.tensors[0].dtype,
+                                      dtype=train_dl.dataset.dtype,
                                       dt= data_records[0]['dt'],
                                       multidevice=multidevice,
                                       mse=mse,

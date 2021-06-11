@@ -114,12 +114,13 @@ class MultiblockEcogTensorDataset(torch.utils.data.Dataset):
         - filt_data_path (str): File path to filtered ECoG data record
     '''
 
-    def __init__(self,data_record,filt_data_record,n_band,part_str,device='cpu'):
+    def __init__(self,data_record,filt_data_record,n_band,part_str,device='cpu',dtype=torch.float32):
         self.data_record = data_record
         self.filt_data_record = filt_data_record
         self.n_band = n_band
         self.part_str = part_str
         self.device = device
+        self.dtype = dtype
         assert self.part_str in ['train','valid','test'], f'Invalid partition string. {self.part_str} not in [train,valid,test].'
         check_key = self.partition_band_key(self.n_band-1)
         assert check_key in self.filt_data_record.keys(), f'(n_band = {self.n_band}) key {check_key} not found in filt_data_record.'
@@ -131,12 +132,12 @@ class MultiblockEcogTensorDataset(torch.utils.data.Dataset):
             filt_sample_list.append(
                 torch.tensor(
                     self.filt_data_record[b_key][index,:,:],
-                    dtype=torch.float32
+                    dtype=self.dtype
                 ).to(self.device)
             )
         full_sample = torch.tensor(
             self.data_record[f'{self.part_str}_ecog'][index,:,:],
-            dtype=torch.float32
+            dtype=self.dtype
         ).to(self.device)
         return [filt_sample_list,full_sample]
     
