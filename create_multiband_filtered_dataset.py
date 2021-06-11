@@ -60,7 +60,7 @@ def create_filtered_data(dataset, dataset_multiband, w, n_iir, n_pad):
                 else:
                     print('filtering data...')
                     data_filt = torch.tensor(
-                        sps.sosfiltfilt(sos_filter, dataset['train_ecog'], axis=1, padlen=n_pad).copy(),
+                        sps.sosfiltfilt(sos_filter, dataset[k], axis=1, padlen=n_pad).copy(),
                         dtype=torch.float32
                     )
                     data_filt = tensor_zscore(data_filt,dim=1)
