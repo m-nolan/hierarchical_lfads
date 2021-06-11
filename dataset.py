@@ -1,7 +1,7 @@
 from typing import Iterable
 import torch
 import torch.nn.functional as F
-from torch._C import dtype
+# from torch._C import dtype, float32
 import torchvision
 from scipy.stats import zscore
 import scipy.signal as sps
@@ -98,6 +98,52 @@ class EcogTensorDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return self.tensors[0].size(0)
+
+class MultiblockEcogTensorDataset(torch.utils.data.Dataset):
+    r'''
+    Dataset wrapping: 
+        (1) a full-band ECoG sample h5 record
+        (2) a multi-band filtered ECoG sample h5 record
+
+    Data samples are returned as a list. The first element is a list of the band-filtered data samples, while the second element is a tensor of the full-band data sample.
+
+    Filtered samples are filtered from the full-band sample in each draw.
+
+    Arguments:
+        - data_path (str):      File path to full-band ECoG data record
+        - filt_data_path (str): File path to filtered ECoG data record
+    '''
+
+    def __init__(self,data_record,filt_data_record,n_band,part_str,device='cpu'):
+        self.data_record = data_record
+        self.filt_data_record = filt_data_record
+        self.n_band = n_band
+        self.part_str = part_str
+        self.device = device
+        assert self.part_str in ['train','valid','test'], f'Invalid partition string. {self.part_str} not in [train,valid,test].'
+        assert f'' in self.filt_data_record.keys(), f'(n_band = {self.n_band}) key {self.partition_band_key(self.n_band-1)} not found in filt_data_record.'
+
+    def __getitem__(self,index):
+        filt_sample_list = []
+        for b_idx in range(self.n_band):
+            b_key = self.partition_band_key(b_idx)
+            filt_sample_list.append(
+                torch.tensor(
+                    self.filt_data_record[b_key][index,:,:],
+                    dtype=torch.float32
+                ).to(self.device)
+            )
+        full_sample = torch.tensor(
+            self.data_record[f'{self.part_str}_ecog'][index,:,:],
+            dtype=torch.float32
+        ).to(self.device)
+        return [filt_sample_list,full_sample]
+    
+    def __len__(self):
+        return self.data_record.shape[0]
+
+    def partition_band_key(self,idx):
+        return f'band{idx}_{self.part_str}_ecog'
 
 def list_or_tuple_recursive_to(x,device):
     if isinstance(x,(list,tuple)):

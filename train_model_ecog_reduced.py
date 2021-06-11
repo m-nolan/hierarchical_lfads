@@ -120,9 +120,9 @@ def main():
                                                                use_fdl = args.use_fdl,
                                                                use_tdl = not args.block_tdl)
         
-    print_model_description(model)
+    print_model_description(model,objective=objective)
     
-    optimizer, scheduler = prep_optimizer(model, hyperparams)
+    optimizer, scheduler = prep_optimizer(model, objective, hyperparams)
         
     if args.use_tensorboard:
         writer, rm_plotter = prep_tensorboard(save_loc, plotter, args.restart)
@@ -220,13 +220,13 @@ def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperpara
                                       dt=data_dict['dt']
                                       )
         
-    elif model_name == 'conv3d_lfads':
-        train_dl, valid_dl, input_dims, plotter = prep_video(data_dict=data_dict, batch_size=batch_size, device=device)
-        model, objective = prep_conv3d_lfads(input_dims = input_dims,
-                                             hyperparams=hyperparams,
-                                             device= device,
-                                             dtype=train_dl.dataset.dtype
-                                             )
+    # elif model_name == 'conv3d_lfads':
+    #     train_dl, valid_dl, input_dims, plotter = prep_video(data_dict=data_dict, batch_size=batch_size, device=device)
+    #     model, objective = prep_conv3d_lfads(input_dims = input_dims,
+    #                                          hyperparams=hyperparams,
+    #                                          device= device,
+    #                                          dtype=train_dl.dataset.dtype
+    #                                          )
     else:
         raise NotImplementedError('Model must be one of \'lfads\', \'conv3d_lfads\', or \'svlae\'')
         
@@ -518,42 +518,22 @@ def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=N
     
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
-    
-def prep_video(data_dict, batch_size, device):
-    train_dl    = torch.utils.data.DataLoader(SyntheticCalciumVideoDataset(traces= data_dict['train_fluor'], cells=data_dict['cells'], device=device), batch_size=args.batch_size)
-    valid_dl    = torch.utils.data.DataLoader(SyntheticCalciumVideoDataset(traces= data_dict['valid_fluor'], cells=data_dict['cells'], device=device), batch_size=args.batch_size)
-    
-    num_trials, num_steps, num_cells = data_dict['train_fluor'].shape
-    num_cells, width, height = data_dict['cells'].shape
-    
-    input_dims = (num_steps, width, height)
-    
-    TIME = torch._np.arange(0, num_steps*data_dict['dt'], data_dict['dt'])
-    
-    train_truth = {}
-    if 'train_latent' in data_dict.keys():
-        train_truth['latent'] = data_dict['train_latent']
-        
-    valid_truth = {}
-    if 'valid_latent' in data_dict.keys():
-        valid_truth['latent'] = data_dict['valid_latent']
 
-    plotter = {'train' : Plotter(time=TIME, truth=train_truth),
-               'valid' : Plotter(time=TIME, truth=valid_truth)}
-    
-    return train_dl, valid_dl, input_size, plotter
-
-#-------------------------------------------------------------------
-#-------------------------------------------------------------------
-
-def prep_optimizer(model, hyperparams):
+def prep_optimizer(model, objective, hyperparams):
     
     if isinstance(model,DataParallel):
         model=model.module
-    optimizer = opt.Adam([p for p in model.parameters() if p.requires_grad],
-                         lr=hyperparams['optimizer']['lr_init'],
-                         betas=hyperparams['optimizer']['betas'],
-                         eps=hyperparams['optimizer']['eps'])
+    if hyperparams['model_name'] == 'lfads_ecog_wass':
+        # this uses RMS prop, not ADAM.
+        params = [p for p in model.parameters() if p.requires_grad] + [p for p in objective.parameters() if p.requires_grad]
+        optimizer = opt.RMSprop(params,
+                            lr = hyperparams['optimizer']['lr_init'],
+                            eps = hyperparams['optimizer']['eps'])
+    else:
+        optimizer = opt.Adam([p for p in model.parameters() if p.requires_grad],
+                            lr=hyperparams['optimizer']['lr_init'],
+                            betas=hyperparams['optimizer']['betas'],
+                            eps=hyperparams['optimizer']['eps'])
     
     scheduler = LFADS_Scheduler(optimizer      = optimizer,
                                 mode           = 'min',
@@ -570,11 +550,15 @@ def prep_optimizer(model, hyperparams):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def print_model_description(model):
+def print_model_description(model,objective=None):
     total_params = 0
     for ix, (name, param) in enumerate(model.named_parameters()):
         print(ix, name, list(param.shape), param.numel(), param.requires_grad)
         total_params += param.numel()
+    if objective:
+        for ix, (name, param) in enumerate(objective.named_parameters()):
+            print(ix, name, list(param.shape), param.numel(), param.requires_grad)
+            total_params += param.numel()
     
     print('Total parameters: %i'%total_params)
 

@@ -12,12 +12,12 @@ import torchvision.transforms as trf
 from torch.utils.data.dataset import Dataset
 import pickle
 
-from dataset import EcogTensorDataset, DropChannels, FilterData, create_n_block_w
+from dataset import EcogTensorDataset, MultiblockEcogTensorDataset, DropChannels, FilterData, create_n_block_w
 
 from trainer import RunManager
 from scheduler import LFADS_Scheduler
 
-from utils import read_data, load_parameters, save_parameters
+from utils import read_data, read_multiband_data, load_parameters, save_parameters
 from plotter import Plotter
 
 from math import floor, log
@@ -92,7 +92,8 @@ def main():
     if not os.path.exists(save_loc):
         os.makedirs(save_loc)
         
-    data_dict   = read_data(args.data_path)
+    # data_dict   = read_data(args.data_path)
+    full_data_record, filt_data_record = read_multiband_data(args.data_path,hyperparams['model']['n_block'])
 
     mse = args.loss == 'mse'
     
@@ -103,7 +104,7 @@ def main():
     # transforms = torch.jit.script(transforms) # this might not work - update, it didn't work.
     
     train_dl, valid_dl, plotter, model, objective = prep_model(model_name  = args.model,
-                                                               data_dict   = data_dict,
+                                                               data_records   = [full_data_record,filt_data_record],
                                                                data_suffix = args.data_suffix,
                                                                batch_size  = args.batch_size,
                                                                seq_len = args.seq_len,
@@ -163,14 +164,14 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
 
-def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False, use_tdl=True):
+def prep_model(model_name, data_records, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False, use_tdl=True):
     if model_name == 'multiblock_lfads_ecog':
-        train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
+        train_dl, valid_dl, input_dims, plotter = prep_data(data_records=data_records, data_suffix=data_suffix, n_band=hyperparams['model']['n_block'], batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
         model, objective = prep_multiblock_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
                                       dtype=train_dl.dataset.tensors[0].dtype,
-                                      dt= data_dict['dt'],
+                                      dt= data_records[0]['dt'],
                                       multidevice=multidevice,
                                       mse=mse,
                                       attention=attention,
@@ -259,23 +260,30 @@ def prep_multiblock_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multi
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
     
-def prep_data(data_dict, data_suffix, batch_size, device, seq_len=None, ch_idx=None, transform=None):
+def prep_data(data_records, data_suffix, n_band, batch_size, device, seq_len=None, ch_idx=None, transform=None):
+    full_data_record = data_records[0]
+    filt_data_record = data_records[1]
     if seq_len is None:
-        seq_len = data_dict[f'train_{data_suffix}'].shape[1]
+        seq_len = full_data_record[f'train_{data_suffix}'].shape[1] # data_suffix use is archaic here, correct!
     if ch_idx is None:
-        n_ch = data_dict[f'train_{data_suffix}'].shape[2]
+        n_ch = full_data_record[f'train_{data_suffix}'].shape[2]
         ch_idx = torch.arange(n_ch)
-    train_data  = torch.Tensor(data_dict['train_%s'%data_suffix])[:,:seq_len,ch_idx]
-    valid_data  = torch.Tensor(data_dict['valid_%s'%data_suffix])[:,:seq_len,ch_idx]
+    # train_data  = torch.Tensor(data_dict['train_%s'%data_suffix])[:,:seq_len,ch_idx]
+    # valid_data  = torch.Tensor(data_dict['valid_%s'%data_suffix])[:,:seq_len,ch_idx]
     
-    num_trials, num_steps, input_size = train_data.shape
+    # num_trials, num_steps, input_size = train_data.shape
+    num_trials, num_steps, input_size = full_data_record['train_ecog'].shape
     
-    transform_mask = [True, False]
-    train_ds    = EcogTensorDataset(train_data,train_data,device=device,transform=transform,transform_mask=transform_mask)
-    valid_ds    = EcogTensorDataset(valid_data,valid_data,device=device,transform=transform,transform_mask=transform_mask)
+    # transform_mask = [True, False]
+    # train_ds    = EcogTensorDataset(train_data,train_data,device=device,transform=transform,transform_mask=transform_mask)
+    train_ds    = MultiblockEcogTensorDataset(full_data_record, filt_data_record, n_band, part_str='train', device=device)
+    # valid_ds    = EcogTensorDataset(valid_data,valid_data,device=device,transform=transform,transform_mask=transform_mask)
+    valid_ds    = MultiblockEcogTensorDataset(full_data_record, filt_data_record, n_band, part_str='valid', device=device)
     
     train_dl    = torch.utils.data.DataLoader(train_ds, batch_size = batch_size, shuffle=True)
     valid_dl    = torch.utils.data.DataLoader(valid_ds, batch_size = batch_size)
+
+    breakpoint() # check your train_ds, valid_ds
     
     TIME = torch.arange(num_steps)*data_dict['dt']
     
