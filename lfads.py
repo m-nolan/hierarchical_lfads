@@ -391,6 +391,10 @@ class LFADS_Multiblock_Net(nn.Module):
                  do_normalize_factors=True, factor_bias = False, device='cpu'):
 
         super(LFADS_Multiblock_Net, self).__init__()
+
+        self.max_norm               = max_norm
+        self.do_normalize_factors   = do_normalize_factors
+
         # create n_block different LFADS_Net objects, define the forward pass to give a different input to each.
         lfads_blocks = []
         for block_idx in range(n_block):
@@ -417,19 +421,28 @@ class LFADS_Multiblock_Net(nn.Module):
         self.lfads_blocks = nn.ModuleList(lfads_blocks)
         # create linear net to mix LFADS block outputs
         # self.out_mix = nn.Linear(in_features = n_block * input_size, out_features = input_size, bias=False)
-        self.out_mix = nn.Linear(in_features=n_block, out_features=1, bias=True) # stack block outputs in a new dimension then mix along that axis then squeeze.
-    def forward(self,src,trg):
+        self.out_mix = nn.Linear(in_features=n_block, out_features=1, bias=False) # stack block outputs in a new dimension then mix along that axis then squeeze.
+    def forward(self,src):
         assert len(src) == len(self.lfads_blocks), f'input sample must be a list-like of length equal to the number of model blocks. {len(src)} sample elements found, {len(self.lfads_blocks)} expected.'
         block_outputs = []
         for idx, lb in enumerate(self.lfads_blocks):
             _recon, _ = lb(src[idx])
             block_outputs.append(_recon['data'])
-        breakpoint()
-        block_outputs = torch.stack(block_outputs,dim=1) # too much data to hold onto, overwriting
+        block_outputs = torch.stack(block_outputs,dim=-1) # too much data to hold onto, overwriting
         pred = self.out_mix(block_outputs)
-        pred = pred.squeeze(dim=1)
+        pred = pred.squeeze(dim=-1)
+        recon = {}
+        recon['data'] = pred
         # omit factor returns for now, return block_outputs later.
-        return pred
+        return recon, block_outputs # consider routing the latent states here instead of the block outputs
+
+    def normalize_factors(self):
+        for lb in self.lfads_blocks:
+            lb.generator.fc_factors.weight.data = F.normalize(lb.generator.fc_factors.weight.data, dim=1)
+
+    # this does nothing, I don't know why it's here. If the optimizer were to change, this would make sense, but it's just an ID transform. Odd.
+    def change_parameter_grad_status(self, step, optimizer, scheduler, loading_checkpoint=False):
+        return optimizer, scheduler
 
     
 class LFADS_SingleSession_Net(LFADS_Net):

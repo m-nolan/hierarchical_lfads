@@ -1,5 +1,7 @@
 from typing import Iterable
 import torch
+import torch.nn.functional as F
+from torch._C import dtype
 import torchvision
 from scipy.stats import zscore
 import scipy.signal as sps
@@ -91,7 +93,7 @@ class EcogTensorDataset(torch.utils.data.Dataset):
                 if self.transform_mask[idx]:
                     sample[idx] = self.transform(s)
         # assign device
-        list_or_tuple_recursive_to(sample,self.device)
+        sample = list_or_tuple_recursive_to(sample,self.device)
         return sample
 
     def __len__(self):
@@ -99,9 +101,10 @@ class EcogTensorDataset(torch.utils.data.Dataset):
 
 def list_or_tuple_recursive_to(x,device):
     if isinstance(x,(list,tuple)):
-        [list_or_tuple_recursive_to(_x,device) for _x in x]
+        x = [list_or_tuple_recursive_to(_x,device) for _x in x]
     else:
-        x.to(device)
+        x = x.to(device)
+    return x
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
@@ -184,12 +187,14 @@ class FilterData(torch.nn.Module):
                     sample,
                     axis=0,
                     padlen=self.padlen
-                    ).copy()
+                    ).copy(),
+                    dtype=torch.float32
                 ))
             if self.btypes[idx] == 'lowpass':
                 None
             else:
                 samples_filt[-1] -= samples_filt[-1].mean(dim=0)
             if self.normalize:
-                samples_filt[-1] = torch.tensor(zscore(samples_filt[-1],axis=0))
+                samples_filt[-1] = F.normalize(samples_filt[-1],dim=0)
+            
         return samples_filt

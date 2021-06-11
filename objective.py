@@ -239,8 +239,10 @@ class Multiblock_LFADS_Loss(Base_Loss):
         l2_weight = self.loss_weights['l2']['weight']
         
         recon_loss = -self.loglikelihood(x_orig, x_recon['data'])
-        
-        recon_fdl = self.freq_domain_loss(x_orig,x_recon['data'])
+        if self.use_fdl:
+            recon_fdl = self.freq_domain_loss(x_orig,x_recon['data'])
+        else:
+            recon_fdl = None
 
         # access model methods/loss terms instead of DataParallel methods
         if isinstance(model,DataParallel):

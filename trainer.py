@@ -6,6 +6,7 @@ import time
 import os
 import pdb
 import functools, collections, operator
+from tqdm import tqdm
 
 
 class RunManager():
@@ -53,7 +54,7 @@ class RunManager():
             
             self.model.train()
 #             print(len(self.train_dl))
-            for i,x in enumerate(self.train_dl):
+            for i,x in tqdm(enumerate(self.train_dl)):
                 tr_tic = time.time()
                 src = x[0]
                 if self.mode == 'recon':
@@ -61,7 +62,6 @@ class RunManager():
                 elif self.mode == 'pred':
                     trg = x[1]
                 self.optimizer.zero_grad()
-                breakpoint()
                 fw_tic = time.time()
                 recon, latent = self.model(src)
 #                 print('fw time: ', time.time()-fw_tic)
