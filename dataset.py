@@ -121,7 +121,8 @@ class MultiblockEcogTensorDataset(torch.utils.data.Dataset):
         self.part_str = part_str
         self.device = device
         assert self.part_str in ['train','valid','test'], f'Invalid partition string. {self.part_str} not in [train,valid,test].'
-        assert f'' in self.filt_data_record.keys(), f'(n_band = {self.n_band}) key {self.partition_band_key(self.n_band-1)} not found in filt_data_record.'
+        check_key = self.partition_band_key(self.n_band-1)
+        assert check_key in self.filt_data_record.keys(), f'(n_band = {self.n_band}) key {check_key} not found in filt_data_record.'
 
     def __getitem__(self,index):
         filt_sample_list = []
@@ -140,7 +141,7 @@ class MultiblockEcogTensorDataset(torch.utils.data.Dataset):
         return [filt_sample_list,full_sample]
     
     def __len__(self):
-        return self.data_record.shape[0]
+        return self.data_record[f'{self.part_str}_ecog'].shape[0]
 
     def partition_band_key(self,idx):
         return f'band{idx}_{self.part_str}_ecog'

@@ -64,9 +64,9 @@ def read_data(data_fname):
 
 def read_multiband_data(data_file_path,n_block):
     data_dir_path = os.path.dirname(data_file_path)
-    filt_data_file_path = os.path.join(data_dir_path,f'gw_250_nblock{n_block}')
-    assert os.path.exists(data_file_path), f'Data file path not found: f{data_file_path}'
-    assert os.path.exists(filt_data_file_path), f'Filtered data file path not found: f{filt_data_file_path}'
+    filt_data_file_path = os.path.join(data_dir_path,f'gw_250_nband{n_block}')
+    assert os.path.exists(data_file_path), f'Data file path not found: {data_file_path}'
+    assert os.path.exists(filt_data_file_path), f'Filtered data file path not found: {filt_data_file_path}'
     full_data_record = h5py.File(data_file_path,mode='r')
     filt_data_record = h5py.File(filt_data_file_path,mode='r')
     return full_data_record, filt_data_record
