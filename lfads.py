@@ -394,6 +394,7 @@ class LFADS_Multiblock_Net(nn.Module):
 
         self.max_norm               = max_norm
         self.do_normalize_factors   = do_normalize_factors
+        self.device                 = device
 
         # create n_block different LFADS_Net objects, define the forward pass to give a different input to each.
         lfads_blocks = []

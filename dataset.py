@@ -195,6 +195,26 @@ class FilterData(torch.nn.Module):
             else:
                 samples_filt[-1] -= samples_filt[-1].mean(dim=0)
             if self.normalize:
-                samples_filt[-1] = F.normalize(samples_filt[-1],dim=0)
+                samples_filt[-1] = tensor_zscore(samples_filt[-1],dim=0)
             
         return samples_filt
+
+# create n uniform filter blocks for the FilterData transform shown above
+def create_n_block_w(n_block):
+    bandwidth = 1/n_block
+    w_c = torch.arange(n_block) * bandwidth
+    w_c[0] = 0.01
+    w_c = torch.cat([w_c,torch.tensor([0.99])])
+    w = []
+    for idx in range(n_block):
+        w.append([w_c[idx],w_c[idx+1]])
+    return w
+
+# z-scoring for tensors in pytorch.
+def tensor_zscore(x,dim=0):
+    mean = x.mean(dim=dim).expand([50,-1,-1]).permute(1,0,2)
+    std = x.std(dim=dim).expand([50,-1,-1]).permute(1,0,2)
+    return (x - mean) / std
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------

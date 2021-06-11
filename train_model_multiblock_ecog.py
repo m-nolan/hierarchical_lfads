@@ -12,7 +12,7 @@ import torchvision.transforms as trf
 from torch.utils.data.dataset import Dataset
 import pickle
 
-from dataset import EcogTensorDataset, DropChannels, FilterData
+from dataset import EcogTensorDataset, DropChannels, FilterData, create_n_block_w
 
 from trainer import RunManager
 from scheduler import LFADS_Scheduler
@@ -149,19 +149,6 @@ def main():
         
     save_figs(save_loc, run_manager.model, run_manager.valid_dl, plotter)
     pickle.dump(run_manager.loss_dict, open(save_loc+'/loss.pkl', 'wb'))
-
-#-------------------------------------------------------------------
-#-------------------------------------------------------------------
-
-def create_n_block_w(n_block):
-    bandwidth = 1/n_block
-    w_c = torch.arange(n_block) * bandwidth
-    w_c[0] = 0.01
-    w_c = torch.cat([w_c,torch.tensor([0.99])])
-    w = []
-    for idx in range(n_block):
-        w.append([w_c[idx],w_c[idx+1]])
-    return w
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
