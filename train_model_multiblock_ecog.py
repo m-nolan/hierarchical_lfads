@@ -167,7 +167,6 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 def prep_model(model_name, data_records, data_suffix, batch_size, device, hyperparams, seq_len=None, ch_idx=None, multidevice=False, mse=True, attention=False, transform=None, use_fdl=False, use_tdl=True):
     if model_name == 'multiblock_lfads_ecog':
         train_dl, valid_dl, input_dims, plotter = prep_data(data_records=data_records, data_suffix=data_suffix, n_band=hyperparams['model']['n_block'], batch_size=batch_size, device=device, seq_len=seq_len, ch_idx=ch_idx, transform=transform)
-        breakpoint()
         model, objective = prep_multiblock_lfads_ecog(input_dims = input_dims,
                                       hyperparams=hyperparams,
                                       device= device,
@@ -283,8 +282,6 @@ def prep_data(data_records, data_suffix, n_band, batch_size, device, seq_len=Non
     
     train_dl    = torch.utils.data.DataLoader(train_ds, batch_size = batch_size, shuffle=True)
     valid_dl    = torch.utils.data.DataLoader(valid_ds, batch_size = batch_size)
-
-    breakpoint() # check your train_ds, valid_ds
     
     # TIME = torch.arange(num_steps)*data_dict['dt']
     
