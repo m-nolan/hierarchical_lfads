@@ -22,15 +22,28 @@ from utils import load_parameters
 
 def prep_model(model_name, data_dict, data_suffix, batch_size, device, hyperparams, input_dims=None):
     if model_name == 'lfads_ecog':
+        test_key = f'test_{data_suffix}'
         # train_dl, valid_dl, input_dims, plotter = prep_data(data_dict=data_dict, data_suffix=data_suffix, batch_size=batch_size, device=device)
         if not input_dims:
-            input_dims = data_dict[f'test_{data_suffix}'].shape[-1]
-        model, objective = prep_lfads_ecog(input_dims = input_dims,
-                                      hyperparams=hyperparams,
-                                      device= device,
-                                      dtype=data_dict[f'test_{data_suffix}'].dtype,
-                                      dt= data_dict['dt']
-                                      )
+            input_dims = data_dict[test_key].shape[-1]
+        model, objective = prep_lfads_ecog(
+            input_dims = input_dims,
+            hyperparams=hyperparams,
+            device= device,
+            dtype=data_dict[test_key].dtype,
+            dt= data_dict['dt']
+        )
+    elif model_name == 'multiblock_lfads_ecog':
+        test_key = f'band0_test_{data_suffix}'
+        if not input_dims:
+            input_dims = data_dict[test_key].shape[-1]
+        model, objective = prep_multiblock_lfads_ecog(
+            input_dims = input_dims,
+            hyperparams = hyperparams,
+            device = device,
+            dtype = data_dict[test_key].dtype,
+            dt = data_dict['dt']
+        )
     return model
 
 #-------------------------------------------------------------------
@@ -62,6 +75,43 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt):
                                                        'l2': hyperparams['objective']['l2']},
                            l2_con_scale             = hyperparams['objective']['l2_con_scale'],
                            l2_gen_scale             = hyperparams['objective']['l2_gen_scale']).to(device)
+
+    return model, objective
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def prep_multiblock_lfads_ecog(input_dims, hyperparams, device, dtype, dt):
+    from objective import Multiblock_LFADS_Loss, LogLikelihoodGaussian
+    from lfads import LFADS_Multiblock_Net
+
+    model = LFADS_Multiblock_Net(
+        input_size = input_dims,
+        factor_size          = hyperparams['model']['factor_size'],
+        g_encoder_size       = hyperparams['model']['g_encoder_size'],
+        c_encoder_size       = hyperparams['model']['c_encoder_size'],
+        g_latent_size        = hyperparams['model']['g_latent_size'],
+        u_latent_size        = hyperparams['model']['u_latent_size'],
+        controller_size      = hyperparams['model']['controller_size'],
+        generator_size       = hyperparams['model']['generator_size'],
+        n_block              = hyperparams['model']['n_block'],
+        prior                = hyperparams['model']['prior'],
+        clip_val             = hyperparams['model']['clip_val'],
+        dropout              = hyperparams['model']['dropout'],
+        do_normalize_factors = hyperparams['model']['normalize_factors'],
+        max_norm             = hyperparams['model']['max_norm'],
+        device               = device
+    )
+
+    loglikelihood = LogLikelihoodGaussian()
+
+    objective = Multiblock_LFADS_Loss(
+        loglikelihood   = loglikelihood,
+        loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 
+                                    'l2': hyperparams['objective']['l2']},
+        l2_con_scale             = hyperparams['objective']['l2_con_scale'],
+        l2_gen_scale             = hyperparams['objective']['l2_gen_scale']
+    ).to(device)
 
     return model, objective
 
@@ -214,6 +264,9 @@ def bootstrap_est(data,n_boot,f):
     est = np.stack(est,axis=0)
     return est
 
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
 def get_model_params(model_dir_path):
     # break down model_dir_path
     model_key_list = model_dir_path.split("\\")
@@ -221,14 +274,21 @@ def get_model_params(model_dir_path):
     model_name = model_key_list[-2]
     data_keys = model_key_list[-3].split("_")
     if len(data_keys) > 2:
-        data_suffix = 'ecog_' + data_keys[2]
+        if data_keys[2] in ['renorm',]: # list of exception dataset extensions, add as required
+            data_suffix = 'ecog'
+        else:
+            data_suffix = 'ecog_' + data_keys[2]
     else:
         data_suffix = 'ecog'
+    if model_name == 'multiblock_lfads_ecog':
+        n_block = int(conf_str.split('_')[6][6:]) # ugh
+    else:
+        n_block = None
     # break down conf_str
     conf_key_list = conf_str.split("_")
     n_ch = int(conf_key_list[-4][3:])
     seq_len = int(conf_key_list[-3][6:])
-    return model_name, data_suffix, n_ch, seq_len
+    return model_name, data_suffix, n_ch, seq_len, n_block
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
@@ -249,11 +309,18 @@ class DataParallelPassthrough(torch.nn.DataParallel):
 #-------------------------------------------------------------------
 
 def load_configure_model_data(model_dir_path,data_path,hyperparameter_path,std_thresh=0.5,test_seq_len=None,adjust_test_set_size=True,dec=None):
-    model_name, data_suffix, n_ch, seq_len = get_model_params(model_dir_path)
+    model_name, data_suffix, n_ch, seq_len, n_block = get_model_params(model_dir_path)
     batch_size = 1000
     device = 'cpu'
     hyperparams = load_parameters(hyperparameter_path)
-    data_dict   = read_data(data_path,keys = [f'test_{data_suffix}','dt'])
+    if model_name == 'multiblock_lfads_ecog':
+        key_list = []
+        for n in range(n_block):
+            key_list.append(f'band{n}_test_{data_suffix}')
+        key_list.append('dt')
+    else:
+        key_list = [f'test_{data_suffix}','dt']
+    data_dict   = read_data(data_path,keys = key_list)
     model= prep_model(model_name = model_name,
                                             data_dict = data_dict,
                                             data_suffix = data_suffix,
@@ -276,15 +343,25 @@ def load_configure_model_data(model_dir_path,data_path,hyperparameter_path,std_t
         seq_len = test_seq_len
     else:
         test_seq_len = seq_len
-    if n_ch <= 32:
-        test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,10:10+n_ch],dtype=np.float32)
-        test_data_fwd = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,10:10+n_ch],dtype=np.float32)
+    if model_name == 'multiblock_lfads_ecog':
+        test_data = tuple(np.array(data_dict[f'band{n}_test_{data_suffix}']) for n in np.arange(n_block))
+        # the target here is always the same, for now (fix later, sorry God)
+        data_dir = os.path.join(os.path.dirname(data_path),'gw_250_renorm')
+        data_dict_fwd = read_data(data_dir,[f'test_{data_suffix}'])
+        test_data_fwd = np.array(data_dict_fwd[f'test_{data_suffix}'])
+        test_data_mask = test_data[0].std(axis=(1,2)) < std_thresh
+        test_data = tuple(t_d[~test_data_mask,:,:] for t_d in test_data)
+        test_data_fwd = test_data_fwd[~test_data_mask,:,:]
     else:
-        test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,:n_ch],dtype=np.float32)
-        test_data_fwd = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,:n_ch],dtype=np.float32)
-    test_data_mask = test_data.std(axis=(1,2)) < std_thresh
-    test_data = test_data[~test_data_mask,:,:]
-    test_data_fwd = test_data_fwd[~test_data_mask,:,:]
+        if n_ch <= 32:
+            test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,10:10+n_ch],dtype=np.float32)
+            test_data_fwd = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,10:10+n_ch],dtype=np.float32)
+        else:
+            test_data = np.array(data_dict[f"test_{data_suffix}"][:,:seq_len,:n_ch],dtype=np.float32)
+            test_data_fwd = np.array(data_dict[f"test_{data_suffix}"][:,seq_len:2*seq_len,:n_ch],dtype=np.float32)
+        test_data_mask = test_data.std(axis=(1,2)) < std_thresh
+        test_data = test_data[~test_data_mask,:,:]
+        test_data_fwd = test_data_fwd[~test_data_mask,:,:]
     if test_seq_len > train_seq_len and adjust_test_set_size:
         new_size = int(np.round(test_data.shape[0]*train_seq_len/test_seq_len))
         test_data = test_data[:new_size,]
@@ -309,7 +386,7 @@ def compute_model_outputs(model,test_data):
 
 def compute_metric_table(test_data,recon,model_dir_path):
     n_trial, n_sample, n_ch = test_data.shape
-    model_name, data_suffix, n_ch, seq_len = get_model_params(model_dir_path)
+    model_name, data_suffix, n_ch, seq_len, n_block = get_model_params(model_dir_path)
     # compute metrics
     mse = np.mean((recon['data'].numpy() - test_data)**2,axis=(1,2))
     rmse = np.sqrt(mse)
@@ -406,7 +483,6 @@ def plot_loss_curves(model_dir):
     return fig, loss_data
 
 def plot_test_data_fits(recon,test_data,ar_model_dict,test_data_mask,n,srate,metrics,trial_idx=None):
-    # assume 1ch for now
     n_trials = test_data.shape[0]
     n_time = test_data.shape[1]
     time = np.arange(n_time)/srate
@@ -426,6 +502,38 @@ def plot_test_data_fits(recon,test_data,ar_model_dict,test_data_mask,n,srate,met
         ax[idx].plot(time,recon['data'][t_idx,:,0],label='recon.')
         if plot_ar:
             ax[idx].plot(time[ar_model_dict['ord']:],ar_model_dict['test_pred'][~test_data_mask,:,:][t_idx,:(n_time-ar_model_dict['ord']),0],label='AR')
+        if r_idx == n_r - 1:
+            ax[idx].set_xlabel('time (s)')
+        if c_idx == 0:
+            ax[idx].set_ylabel('a.u.')
+        ax[idx].set_title(f'trial {t_idx}')
+        metric_str = f"mse: {metrics['mse'][t_idx]:0.3f}\nrpe: {metrics['rpe'][t_idx]:0.3f}\ncorr: {metrics['corr'][t_idx]:0.3f}"
+        text_x = ax[idx].get_xlim()[0]
+        text_y = ax[idx].get_ylim()[0]
+        ax[idx].text(text_x,text_y,metric_str,horizontalalignment='left',verticalalignment='bottom',fontsize=8,bbox=dict(alpha=0.1))
+    ax[0].legend(loc=0)
+    return fig, ax
+
+def plot_test_data_fits_mb(recon,block_out,test_data,test_data_mask,n,srate,metrics,trial_idx=None):
+    n_trials = test_data.shape[0]
+    n_time = test_data.shape[1]
+    n_block = block_out.shape[-1]
+    time = np.arange(n_time)/srate
+    if trial_idx == None:
+        trial_idx = np.random.choice(np.arange(n_trials),n,replace=False) # replace this with fixed values to recreate the poster traces
+    else:
+        None
+    n_r = int(np.ceil(np.sqrt(n)))
+    n_c = int(np.ceil(n/n_r))
+    fig, ax = plt.subplots(n_r,n_c,dpi=150,constrained_layout=True,sharex=True,figsize=(6,6))
+    ax = ax.reshape(-1)
+    for idx, t_idx in enumerate(trial_idx):
+        r_idx = idx // n_c
+        c_idx = idx % n_c
+        ax[idx].plot(time,test_data[t_idx,:,0],label='target')
+        ax[idx].plot(time,recon['data'][t_idx,:,0],label='recon.')
+        for b_idx in range(n_block):
+            ax[idx].plot(time,block_out[t_idx,:,0,b_idx],label=f'block {b_idx+1}')
         if r_idx == n_r - 1:
             ax[idx].set_xlabel('time (s)')
         if c_idx == 0:
@@ -501,6 +609,62 @@ def plot_test_data_fits_psd(recon, test_data, ar_model_dict, test_data_mask, sra
                      'f_psd': f_psd,
                      'f_ar_psd': f_ar_psd}
 
+def plot_test_data_fits_psd_mb(recon, block_out, test_data, srate, n_boot):
+    n_block = block_out.shape[-1]
+    # power features
+    trial_mask = test_data[:,:,0].std(axis=1) < 0.5
+    f_psd, data_psd = welch(detrend(test_data[~trial_mask,],type='linear',axis=-2),fs=srate,axis=1) # why axis=-2? multiple batch acceptance? Weird
+    _, recon_psd = welch(detrend(recon['data'][~trial_mask,],type='linear',axis=-2),fs=srate,axis=1)
+    _, block_psd = welch(detrend(block_out[~trial_mask,],type='linear',axis=-3),fs=srate,axis=1)
+    _, diff_psd = welch(detrend(test_data[~trial_mask,]-recon['data'][~trial_mask,].numpy(),type='linear',axis=-2),fs=srate,axis=1)
+    f_est = lambda x: x.mean(axis=0)
+    data_psd_bsd = bootstrap_est(data_psd[:,:,0], n_boot, f_est) # all of this is JUST THE 1st CHANNEL? Why? Fix that later.
+    data_psd_mean = data_psd_bsd.mean(axis=0)
+    data_psd_95ci = np.percentile(data_psd_bsd,[2.5, 97.5],axis=0)
+    block_psd_bsd = bootstrap_est(block_psd[:,:,0,:],n_boot,f_est)
+    block_psd_mean = block_psd_bsd.mean(axis=0)
+    block_psd_95ci = np.percentile(block_psd_bsd,[2.5, 97.5],axis=0)
+    recon_psd_bsd = bootstrap_est(recon_psd[:,:,0], n_boot, f_est)
+    recon_psd_mean = recon_psd_bsd.mean(axis=0)
+    recon_psd_95ci = np.percentile(recon_psd_bsd,[2.5, 97.5],axis=0)
+    diff_psd_bsd = bootstrap_est(diff_psd[:,:,0],n_boot,f_est)
+    diff_psd_mean = diff_psd_bsd.mean(axis=0)
+    diff_psd_95ci = np.percentile(diff_psd_bsd,[2.5, 97.5],axis=0)
+    fig, ax = plt.subplots(1,1,dpi=100,sharex=True)
+    ax.fill_between(f_psd, 10*np.log10(data_psd_95ci[0,:]), 10*np.log10(data_psd_95ci[1,:]),alpha=0.2,label='data 95% ci')
+    ax.plot(f_psd, 10*np.log10(data_psd_mean), label='data mean');
+    ax.fill_between(f_psd, 10*np.log10(recon_psd_95ci[0,:]), 10*np.log10(recon_psd_95ci[1,:]),alpha=0.2,label='recon. 95% ci')
+    ax.plot(f_psd, 10*np.log10(recon_psd_mean), label='recon. mean');
+    for b_idx in range(n_block):
+        ax.fill_between(f_psd, 10*np.log10(block_psd_95ci[0,:,b_idx]), 10*np.log10(block_psd_95ci[1,:,b_idx]),alpha=0.2,label=f'block {b_idx+1} 95% ci')
+        ax.plot(f_psd, 10*np.log10(block_psd_mean[:,b_idx]), label=f'block {b_idx+1} mean')
+    ax.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err. 95% ci')
+    ax.plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='err. mean')
+    ax.legend(loc=0)
+    # consider changing this to relative error distribution instead of a straight residual.
+    fig_diff, ax_diff = plt.subplots(1,1,dpi=100)
+    ax_diff.fill_between(f_psd, 10*np.log10(diff_psd_95ci[0,:]), 10*np.log10(diff_psd_95ci[1,:]), color='k', alpha=0.2, label='err 95% ci')
+    ax_diff.plot(f_psd, 10*np.log10(diff_psd_mean), color='k', label='err mean')
+    ax_diff.legend(loc=0)
+    ax.set_xlabel('freq. (Hz)')
+    ax.set_ylabel('PSD (dB)')
+    ax.set_title('Power Spectral Density, Data v. Reconstruction')
+    ax.set_xlim(0,100)
+    ax_diff.set_xlabel('freq. (Hz)')
+    ax_diff.set_ylabel('PSD (dB)')
+    ax_diff.set_title('Power Spectral Density, Reconstruction Error')
+    ax_diff.set_xlim(0,100)
+    return fig, ax, fig_diff, ax_diff, {
+                     'data_psd_mean': data_psd_mean,
+                     'data_psd_95ci': data_psd_95ci,
+                     'block_psd_mean': block_psd_mean,
+                     'block_psd_mean': block_psd_95ci,
+                     'recon_psd_mean': recon_psd_mean,
+                     'recon_psd_95ci': recon_psd_95ci,
+                     'diff_psd_mean': diff_psd_mean,
+                     'diff_psd_95ci': diff_psd_95ci,
+                     'f_psd': f_psd,}
+
 def model_visualization(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,srate,n_boot,metrics):
     print(f'loading model from:\t{model_dir_path}')
     model, test_data, test_data_mask = load_configure_model_data(model_dir_path,data_path,hyperparameter_path)
@@ -527,6 +691,10 @@ def model_analysis(model_dir_path,data_path,hyperparameter_path,ar_model_dict,n,
     print('computing metric statistics...')
     stat_table, metric_dict = compute_metric_table(target_data,recon,model_dir_path)
     print('Generating test plots...')
-    f_trace, _ = plot_test_data_fits(recon, target_data, ar_model_dict, test_data_mask, n, srate, metric_dict, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
-    f_psd, _, f_diff, _, psd_data_dict = plot_test_data_fits_psd(recon, target_data, ar_model_dict, test_data_mask, srate, n_boot)
+    if model.__class__.__name__ == 'LFADS_Multiblock_Net':
+        f_trace, _ = plot_test_data_fits_mb(recon, generators, target_data, test_data_mask, n, srate, metric_dict, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
+        f_psd, _, f_diff, _, psd_data_dict = plot_test_data_fits_psd_mb(recon, generators, target_data, srate, n_boot)
+    else:
+        f_trace, _ = plot_test_data_fits(recon, target_data, ar_model_dict, test_data_mask, n, srate, metric_dict, trial_idx=[11149, 11086, 3908, 7024, 2172, 5330])
+        f_psd, _, f_diff, _, psd_data_dict = plot_test_data_fits_psd(recon, target_data, ar_model_dict, test_data_mask, srate, n_boot)
     return stat_table, metric_dict, test_data_mask, f_trace, f_psd, f_diff, psd_data_dict

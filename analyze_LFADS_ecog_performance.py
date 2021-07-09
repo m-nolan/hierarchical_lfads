@@ -13,7 +13,7 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_dir',type=str,required=True)
-parser.add_argument('--ar_model',type=str,required=True)
+parser.add_argument('--ar_model',type=str,required=False,default='')
 parser.add_argument('--dataset',type=str,required=True)
 parser.add_argument('--pred',action='store_true',default=False)
 
@@ -25,7 +25,11 @@ def get_paths(args):
     # parse input path arguments and create hyperparamter path
     assert os.path.exists(args.model_dir), f'LFADS model directory {args.model_dir} not found\nterminating analysis.\n'
     assert os.path.exists(args.dataset), f'ECoG dataset {args.dataset} not found\nterminating analysis.\n'
-    assert os.path.exists(args.ar_model), f'AR model location {args.ar_model} not found\nterminating analysis.\n'
+    if os.path.exists(args.ar_model):
+        ar_model_path = args.ar_model
+    else:
+        print('AR model path not recognized. Proceding without AR model comparison.')
+        ar_model_path = None
     model_dir = args.model_dir
     dataset_path = args.dataset
     ar_model_path = args.ar_model

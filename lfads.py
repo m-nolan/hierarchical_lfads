@@ -423,6 +423,7 @@ class LFADS_Multiblock_Net(nn.Module):
         # create linear net to mix LFADS block outputs
         # self.out_mix = nn.Linear(in_features = n_block * input_size, out_features = input_size, bias=False)
         self.out_mix = nn.Linear(in_features=n_block, out_features=1, bias=False) # stack block outputs in a new dimension then mix along that axis then squeeze.
+
     def forward(self,src):
         assert len(src) == len(self.lfads_blocks), f'input sample must be a list-like of length equal to the number of model blocks. {len(src)} sample elements found, {len(self.lfads_blocks)} expected.'
         block_outputs = []
@@ -436,6 +437,22 @@ class LFADS_Multiblock_Net(nn.Module):
         recon['data'] = pred
         # omit factor returns for now, return block_outputs later.
         return recon, block_outputs # consider routing the latent states here instead of the block outputs
+
+    def forward_all(self,src):
+        assert len(src) == len(self.lfads_blocks), f'input sample must be a list-like of length equal to the number of model blocks. {len(src)} sample elements found, {len(self.lfads_blocks)} expected.'
+        block_outputs = []
+        block_gen = []
+        for idx, lb in enumerate(self.lfads_blocks):
+            _recon, (_factors, _gen, _gen_ic) = lb.forward_all(src[idx])
+            block_outputs.append(_recon['data'])
+            block_gen.append(_gen)
+        block_outputs = torch.stack(block_outputs,dim=-1) # too much data to hold onto, overwriting
+        pred = self.out_mix(block_outputs)
+        pred = pred.squeeze(dim=-1)
+        recon = {}
+        recon['data'] = pred
+        # omit factor returns for now, return block_outputs later.
+        return recon, (None, block_outputs, block_gen) # I've got to find a better way to pack these elements together. Dict?
 
     def normalize_factors(self):
         for lb in self.lfads_blocks:
