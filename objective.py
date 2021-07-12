@@ -259,10 +259,71 @@ class Multiblock_LFADS_Loss(Base_Loss):
         loss_dict = {'kl'    : float(kl_loss.data),
                      'l2'    : float(l2_loss.data)}
         if self.use_tdl:
-            try:
-                loss += recon_loss
-            except:
-                breakpoint()
+            loss += recon_loss
+            loss_dict['recon'] = float(recon_loss.data)
+        if self.use_fdl:
+            loss += recon_fdl
+            loss_dict['recon_fdl'] = float(recon_fdl.data)
+        loss_dict['total'] = float(loss.data)
+
+        if torch.isinf(loss):
+            import matplotlib.pyplot as plt
+            breakpoint()
+
+        return loss, loss_dict
+
+class Multiblock_LFADS_Loss_Allblocks(Base_Loss):
+    def __init__(self, loglikelihood,
+                 use_fdl = False,
+                 use_tdl = True,
+                 loss_weight_dict= {'kl' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0},
+                                    'l2' : {'weight' : 0.0, 'schedule_dur' : 2000, 'schedule_start' : 0, 'max' : 1.0, 'min' : 0.0}},
+                 l2_con_scale=0.0, l2_gen_scale=0.0):
+        
+        super(Multiblock_LFADS_Loss_Allblocks, self).__init__(loss_weight_dict=loss_weight_dict, l2_con_scale=l2_con_scale, l2_gen_scale=l2_gen_scale)
+        self.loglikelihood = loglikelihood
+        self.use_fdl = use_fdl
+        self.use_tdl = use_tdl
+        
+    def freq_domain_loss(self, x_orig, x_recon, min_clamp=-20.0, eps=1e-13):
+        # data is [n_batch, n_time, n_ch]
+        x_orig_lsp = torch.log10(torch.abs(rfft(x_orig,dim=1))+eps)
+        x_recon_lsp = torch.log10(torch.abs(rfft(x_recon,dim=1))+eps)
+#         x_orig_lsp = torch.clamp(torch.log10(torch.abs(rfft(x_orig,dim=1))),min=min_clamp)
+#         x_recon_lsp = torch.clamp(torch.log10(torch.abs(rfft(x_recon,dim=1))),min=min_clamp)
+        if torch.any(torch.isnan(x_orig_lsp)) or torch.any(torch.isnan(x_recon_lsp)):
+            breakpoint()
+        return F.mse_loss(x_orig_lsp,x_recon_lsp,reduction='sum')/x_orig_lsp.shape[0]
+        
+    def forward(self, x_block, x_orig, x_block_out, x_recon, model):
+        kl_weight = self.loss_weights['kl']['weight']
+        l2_weight = self.loss_weights['l2']['weight']
+        
+        # compute error from total reconstruction and each block's recon
+        recon_loss = -self.loglikelihood(x_orig, x_recon['data'])
+        for b_idx in range(len(x_block)):
+            recon_loss += -self.loglikelihood(x_block[b_idx], x_block_out[:,:,:,b_idx])
+        if self.use_fdl:
+            recon_fdl = self.freq_domain_loss(x_orig,x_recon['data'])
+        else:
+            recon_fdl = None
+
+        # access model methods/loss terms instead of DataParallel methods
+        if isinstance(model,DataParallel):
+            model = model.module
+        kl_loss = 0
+        l2_loss = 0
+        for lb in model.lfads_blocks:
+            kl_loss += kl_weight * lb.kl_div()
+            l2_loss += 0.5 * l2_weight * self.l2_gen_scale * lb.generator.gru_generator.hidden_weight_l2_norm()
+            if hasattr(lb, 'controller'):
+                l2_loss += 0.5 * l2_weight * self.l2_con_scale * lb.controller.gru_controller.hidden_weight_l2_norm()
+            
+        loss = kl_loss + l2_loss
+        loss_dict = {'kl'    : float(kl_loss.data),
+                     'l2'    : float(l2_loss.data)}
+        if self.use_tdl:
+            loss += recon_loss
             loss_dict['recon'] = float(recon_loss.data)
         if self.use_fdl:
             loss += recon_fdl

@@ -226,7 +226,7 @@ def prep_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse
 #-------------------------------------------------------------------
 
 def prep_multiblock_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multidevice, mse=True, attention=False, use_fdl=False, use_tdl=True):
-    from objective import Multiblock_LFADS_Loss, LogLikelihoodGaussian
+    from objective import Multiblock_LFADS_Loss, Multiblock_LFADS_Loss_Allblocks, LogLikelihoodGaussian
     from lfads import LFADS_Multiblock_Net
 
     model = LFADS_Multiblock_Net(   input_size           = input_dims,
@@ -247,7 +247,7 @@ def prep_multiblock_lfads_ecog(input_dims, hyperparams, device, dtype, dt, multi
     
     loglikelihood = LogLikelihoodGaussian(mse=mse)
 
-    objective = Multiblock_LFADS_Loss(loglikelihood=loglikelihood,
+    objective = Multiblock_LFADS_Loss_Allblocks(loglikelihood=loglikelihood,
                            use_fdl=use_fdl,
                            use_tdl=use_tdl,
                            loss_weight_dict         = {'kl': hyperparams['objective']['kl'], 

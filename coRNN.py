@@ -29,7 +29,7 @@ class coRNNCell(nn.Module):
 
 class coRNN(nn.Module):
 
-    def __init__(self,input_size,hidden_size,output_size,n_layer,dt,gamma,epsilon):
+    def __init__(self,input_size,hidden_size,output_size,n_layer,dt=1,gamma=1.0,epsilon=1.0,dropout=0.0):
         super(coRNN,self).__init__()
 
         self.hidden_size    = hidden_size
@@ -42,18 +42,23 @@ class coRNN(nn.Module):
                 in_size = hidden_size
             cell.append(coRNNCell(input_size=in_size,hidden_size=hidden_size,dt=dt,gamma=gamma,epsilon=epsilon))
         self.cell       = nn.ModuleList(cell)
+        self.dropout    = nn.Dropout(dropout)
         self.readout    = nn.Linear(in_features=hidden_size, out_features=output_size)
 
-    def forward(self,u):
+    def forward(self,u,y_0=None):
         # init hidden states as zero, assuming batch-first
-        y = Variable(torch.zeros(u.size(0),self.hidden_size,dtype=u.dtype)).to(u.device)
+        
+        if y_0 is None:
+            y = Variable(torch.zeros(u.size(0),self.hidden_size,dtype=u.dtype)).to(u.device)
+        else:
+            y = Variable(y_0)
         z = Variable(torch.zeros(u.size(0),self.hidden_size,dtype=u.dtype)).to(u.device)
 
         for t in range(u.size(0)):
             y, z = self.cell[0](u[:,t,:],y,z)
-        output = self.readout(y)
+        output = self.readout(self.dropout(y))
 
-        return output
+        return output, y
 
 # - - -- --- ----- -------- ------------- -------- ----- --- -- - - #
 # - - -- --- ----- -------- ------------- -------- ----- --- -- - - #

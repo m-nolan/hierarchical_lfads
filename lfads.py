@@ -373,6 +373,360 @@ class LFADS_Net(nn.Module):
                                           prior_lv = self.u_prior_logvar)
         return kl
 
+class LFADS_coRNN_Net(nn.Module):
+    '''
+    LFADS_Net (Latent Factor Analysis via Dynamical Systems) neural network class.
+    
+    __init__(self, input_size, factor_size = 4,
+                   g_encoder_size = 64, c_encoder_size = 64,
+                   g_latent_size = 64, u_latent_size = 1,
+                   controller_size= 64, generator_size = 64,
+                   prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
+                                    'var'  : {'value': 0.1, 'learnable' : False}},
+                             'u'  : {'mean' : {'value': 0.0, 'learnable' : False},
+                                    'var'  : {'value': 0.1, 'learnable' : True},
+                                     'tau'  : {'value': 10,  'learnable' : True}}},
+                   clip_val=5.0, dropout=0.0, max_norm = 200,
+                   do_normalize_factors=True, device='cpu')
+                   
+    Required Arguments:
+        - input_size (int) : size of input dimensions (number of cells)
+    Optional Arguments:
+        - g_encoder_size     (int): size of generator encoder network
+        - c_encoder_size     (int): size of controller encoder network
+        - g_latent_size      (int): size of generator ic latent variable
+        - u_latent_size      (int): size of generator input latent variable
+        - controller_size    (int): size of controller network
+        - generator_size     (int): size of generator network
+        - prior             (dict): dictionary of prior distribution parameters
+        - clip_val         (float): RNN hidden state value limit
+        - dropout          (float): dropout probability
+        - max_norm           (int): maximum gradient norm
+        - do_normalize_factors (bool): whether to normalize factors
+        - device          (string): device to use
+    '''
+    
+    def __init__(self, input_size, factor_size = 4,
+                 g_encoder_size  = 64, c_encoder_size = 64,
+                 g_latent_size   = 64, u_latent_size  = 1,
+                 controller_size = 64, generator_size = 64,
+                 prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
+                                  'var'  : {'value': 0.1, 'learnable' : False}},
+                          'u'  : {'mean' : {'value': 0.0, 'learnable' : False},
+                                  'var'  : {'value': 0.1, 'learnable' : True},
+                                  'tau'  : {'value': 10,  'learnable' : True}}},
+                 clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
+                 do_normalize_factors=True, factor_bias = False, device='cpu'):
+        
+        super(LFADS_coRNN_Net, self).__init__()
+        
+        self.input_size           = input_size
+#         self.output_size          = input_size if output_size is None else output_size
+        self.g_encoder_size       = g_encoder_size
+        self.c_encoder_size       = c_encoder_size
+        self.g_latent_size        = g_latent_size
+        self.u_latent_size        = u_latent_size
+        self.controller_size      = controller_size
+        self.generator_size       = generator_size
+        self.factor_size          = factor_size
+        
+        self.clip_val             = clip_val
+        self.max_norm             = max_norm
+        self.do_normalize_factors = do_normalize_factors
+        self.factor_bias          = factor_bias
+        self.device               = device
+        self.deep_freeze          = deep_freeze
+        
+        self.dropout              = torch.nn.Dropout(dropout)
+
+        # Initialize encoder RNN
+        self.encoder     = LFADS_Encoder(input_size     = self.input_size,
+                                         g_encoder_size = self.g_encoder_size,
+                                         c_encoder_size = self.c_encoder_size,
+                                         g_latent_size  = self.g_latent_size,
+                                         clip_val       = self.clip_val,
+                                         dropout        = dropout)
+        
+        # Initialize controller RNN
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            self.controller  = LFADS_ControllerCell(input_size      = self.c_encoder_size*2 + self.factor_size,
+                                                    controller_size = self.controller_size,
+                                                    u_latent_size   = self.u_latent_size,
+                                                    clip_val        = self.clip_val,
+                                                    dropout         = dropout)
+        
+        # Initialize generator RNN
+        self.generator   = LFADS_CoRNN_GeneratorCell(input_size     = self.u_latent_size,
+                                            generator_size = self.generator_size,
+                                            factor_size    = self.factor_size,
+                                            clip_val       = self.clip_val,
+                                            factor_bias    = self.factor_bias,
+                                            dropout        = dropout)
+        
+        
+        # Initialize dense layers
+        if self.g_latent_size == self.generator_size:
+            self.fc_genstate = Identity(in_features=self.g_latent_size, out_features=self.generator_size)
+        else:
+            self.fc_genstate = nn.Linear(in_features= self.g_latent_size, out_features= self.generator_size)
+                
+        # Initialize learnable biases
+        self.g_encoder_init  = nn.Parameter(torch.zeros(2, self.g_encoder_size))
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            self.c_encoder_init  = nn.Parameter(torch.zeros(2, self.c_encoder_size))
+            self.controller_init = nn.Parameter(torch.zeros(self.controller_size))
+        
+        # Initialize priors
+        self.register_buffer('g_prior_mean',None)
+        self.register_buffer('g_prior_logvar',None)
+        self.register_buffer('g_posterior_mean',None)
+        self.register_buffer('g_posterior_logvar',None) # these become large arrays and should not be singleton values.
+        
+        self.g_prior_mean = torch.ones(self.g_latent_size, device=device) * prior['g0']['mean']['value']
+        
+        if prior['g0']['mean']['learnable']:
+            self.g_prior_mean = nn.Parameter(self.g_prior_mean)
+        self.g_prior_logvar = torch.ones(self.g_latent_size, device=device) * log(prior['g0']['var']['value'])
+        if prior['g0']['var']['learnable']:
+            self.g_prior_logvar = nn.Parameter(self.g_prior_logvar)
+            
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            self.u_prior_gp_mean = torch.ones(self.u_latent_size, device=device) * prior['u']['mean']['value']
+            if prior['u']['mean']['learnable']:
+                self.u_prior_gp_mean = nn.Parameter(self.u_prior_gp_mean)
+            self.u_prior_gp_logvar = torch.ones(self.u_latent_size, device=device) * log(prior['u']['var']['value'])
+            if prior['u']['var']['learnable']:
+                self.u_prior_gp_logvar = nn.Parameter(self.u_prior_gp_logvar)
+            self.u_prior_gp_logtau = torch.ones(self.u_latent_size, device=device) * log(prior['u']['tau']['value'])
+            if prior['u']['tau']['learnable']:
+                self.u_prior_gp_logtau = nn.Parameter(self.u_prior_gp_logtau)
+        
+        # Initialize weights
+        self.initialize_weights()
+        
+    def forward(self, input):
+        '''
+        forward(input)
+        
+        Required Arguments:
+            - input (torch.Tensor): input data with dimensions [time x batch x cells]
+        '''
+        # tic = time.time()
+
+        # Initialize hidden states
+        g_encoder_state, c_encoder_state, controller_state = self.initialize_hidden_states(input) 
+
+        
+        # Encode input and calculate and calculate generator initial condition variational posterior distribution
+        self.g_posterior_mean, self.g_posterior_logvar, out_gru_g_enc, out_gru_c_enc = self.encoder(input, (g_encoder_state, c_encoder_state))
+
+        # Sample generator state
+        generator_state = self.fc_genstate(self.sample_gaussian(self.g_posterior_mean, self.g_posterior_logvar))
+        
+        # Initialize factor state
+        factor_state = self.generator.fc_factors(self.dropout(generator_state))
+        
+        # Factors store
+        factors = torch.empty(0, self.batch_size, self.factor_size, device=self.device)
+        
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            # initialize generator input store
+            gen_inputs = torch.empty(0, self.batch_size, self.u_latent_size, device=self.device)
+            
+            # initialize u posterior store
+            self.u_posterior_mean   = torch.empty(self.batch_size, 0, self.u_latent_size, device=self.device)
+            self.u_posterior_logvar = torch.empty(self.batch_size, 0, self.u_latent_size, device=self.device)
+        
+        # tic = time.time()
+        
+        # Controller and Generator Loop
+        for t in range(self.steps_size):
+            if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+                # Update controller state and calculate generator input variational posterior distribution
+                u_mean, u_logvar, controller_state = self.controller(torch.cat((out_gru_c_enc[t], factor_state), dim=1), controller_state)
+                
+                # Append u_posterior mean and logvar
+                self.u_posterior_mean = torch.cat((self.u_posterior_mean, u_mean.unsqueeze(1)), dim=1)
+                self.u_posterior_logvar = torch.cat((self.u_posterior_logvar, u_logvar.unsqueeze(1)), dim=1)
+
+                # Sample generator input
+                generator_input = self.sample_gaussian(u_mean, u_logvar)
+                # Append generator input to store
+                gen_inputs  = torch.cat((gen_inputs, generator_input.unsqueeze(0)), dim=0)
+            else:
+                generator_input = torch.empty(self.batch_size, self.u_latent_size, device=self.device)
+                gen_inputs = None
+                
+            # Update generator and factor state
+            if self.attn:
+                generator_state, factor_state = self.generator(generator_input, generator_state, input)
+            else:
+                generator_state, factor_state = self.generator(generator_input, generator_state)
+            # Store factor state
+            factors = torch.cat((factors, factor_state.unsqueeze(0)), dim=0)
+            
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            # Instantiate AR1 process as mean and variance per time step
+            self.u_prior_mean, self.u_prior_logvar = self._gp_to_normal(self.u_prior_gp_mean, self.u_prior_gp_logvar, self.u_prior_gp_logtau, gen_inputs)
+        
+        return (factors, gen_inputs)
+
+    def forward_all(self, input):
+        '''
+        forward(input)
+        
+        Required Arguments:
+            - input (torch.Tensor): input data with dimensions [time x batch x cells]
+        '''
+        import time
+        tic = time.time()
+
+        # Initialize hidden states
+        g_encoder_state, c_encoder_state, controller_state = self.initialize_hidden_states(input) 
+
+        
+        # Encode input and calculate and calculate generator initial condition variational posterior distribution
+        self.g_posterior_mean, self.g_posterior_logvar, out_gru_g_enc, out_gru_c_enc = self.encoder(input, (g_encoder_state, c_encoder_state))
+        
+
+        # Sample generator state
+        generator_state = self.fc_genstate(self.sample_gaussian(self.g_posterior_mean, self.g_posterior_logvar))
+        
+        # Initialize factor state
+        factor_state = self.generator.fc_factors(self.dropout(generator_state))
+        
+        # generator store
+        generators = torch.empty(0,self.batch_size, self.generator_size, device=self.device)
+
+        # Factors store
+        factors = torch.empty(0, self.batch_size, self.factor_size, device=self.device)
+        
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            # initialize generator input store
+            gen_inputs = torch.empty(0, self.batch_size, self.u_latent_size, device=self.device)
+            
+            # initialize u posterior store
+            self.u_posterior_mean   = torch.empty(self.batch_size, 0, self.u_latent_size, device=self.device)
+            self.u_posterior_logvar = torch.empty(self.batch_size, 0, self.u_latent_size, device=self.device)
+        
+        tic = time.time()
+        
+        # Controller and Generator Loop
+        for t in range(self.steps_size):
+            if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+                # Update controller state and calculate generator input variational posterior distribution
+                u_mean, u_logvar, controller_state = self.controller(torch.cat((out_gru_c_enc[t], factor_state), dim=1), controller_state)
+                
+                # Append u_posterior mean and logvar
+                self.u_posterior_mean = torch.cat((self.u_posterior_mean, u_mean.unsqueeze(1)), dim=1)
+                self.u_posterior_logvar = torch.cat((self.u_posterior_logvar, u_logvar.unsqueeze(1)), dim=1)
+
+                # Sample generator input
+                generator_input = self.sample_gaussian(u_mean, u_logvar)
+                # Append generator input to store
+                gen_inputs  = torch.cat((gen_inputs, generator_input.unsqueeze(0)), dim=0)
+            else:
+                generator_input = torch.empty(self.batch_size, self.u_latent_size, device=self.device)
+                gen_inputs = None
+                
+            # Update generator and factor state
+            generator_state, factor_state = self.generator(generator_input, generator_state)
+            # Store factor state
+            factors = torch.cat((factors, factor_state.unsqueeze(0)), dim=0)
+            generators = torch.cat((generators, generator_state.unsqueeze(0)), dim=0)
+            
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            # Instantiate AR1 process as mean and variance per time step
+            self.u_prior_mean, self.u_prior_logvar = self._gp_to_normal(self.u_prior_gp_mean, self.u_prior_gp_logvar, self.u_prior_gp_logtau, gen_inputs)
+        
+        return (factors, generators, gen_inputs)
+    
+    def sample_gaussian(self, mean, logvar):
+        '''
+        sample_gaussian(mean, logvar)
+        
+        Sample from a diagonal gaussian with given mean and log-variance
+        
+        Required Arguments:
+            - mean (torch.Tensor)   : mean of diagional gaussian
+            - logvar (torch.Tensor) : log-variance of diagonal gaussian
+        '''
+        # Generate noise from standard gaussian
+        eps = torch.randn(mean.shape, requires_grad=False, dtype=torch.float32).to(torch.get_default_dtype()).to(self.device)
+        # Scale and shift by mean and standard deviation
+        return torch.exp(logvar*0.5)*eps + mean
+    
+    def initialize_hidden_states(self, input):
+        '''
+        initialize_hidden_states()
+        
+        Initialize hidden states of recurrent networks
+        '''
+        
+        # Check dimensions
+        self.steps_size, self.batch_size, input_size = input.shape
+        assert input_size == self.input_size, 'Input is expected to have dimensions [%i, %i, %i]'%(self.steps_size, self.batch_size, self.input_size)
+        
+        g_encoder_state  = (torch.ones(self.batch_size, 2,  self.g_encoder_size, device=self.device) * self.g_encoder_init).permute(1, 0, 2)
+        if self.c_encoder_size > 0 and self.controller_size > 0 and self.u_latent_size > 0:
+            c_encoder_state  = (torch.ones(self.batch_size, 2,  self.c_encoder_size, device=self.device) * self.c_encoder_init).permute(1, 0, 2)
+            controller_state = torch.ones(self.batch_size, self.controller_size, device=self.device) * self.controller_init
+            return g_encoder_state, c_encoder_state, controller_state
+        else:
+            return g_encoder_state, None, None
+    
+    def _gp_to_normal(self, gp_mean, gp_logvar, gp_logtau, process):
+        '''
+        _gp_to_normal(gp_mean, gp_logvar, gp_logtau, process)
+        
+        Convert gaussian process with given process mean, process log-variance, process tau, and realized process
+        to mean and log-variance of diagonal Gaussian for each time-step
+        '''
+        
+        mean   = gp_mean * torch.ones(1, process.shape[1], process.shape[2], device=self.device)
+        logvar = gp_logvar * torch.ones(1, process.shape[1], process.shape[2], device=self.device)
+        
+        mean   = torch.cat((mean, gp_mean + (process[:-1] - gp_mean) * torch.exp(-1/gp_logtau.exp())))
+        logvar = torch.cat((logvar, torch.log(1 - torch.exp(-1/gp_logtau.exp()).pow(2)) + gp_logvar * torch.ones(process.shape[0]-1, process.shape[1], process.shape[2], device=self.device)))
+        return mean.permute(1, 0, 2), logvar.permute(1, 0, 2)
+    
+    def initialize_weights(self):
+        '''
+        initialize_weights()
+        
+        Initialize weights of network
+        '''
+        
+        def standard_init(weights):
+            k = weights.shape[1] # dimensionality of inputs
+            weights.data.normal_(std=k**-0.5) # inplace resetting W ~ N(0, 1/sqrt(K))
+        
+        with torch.no_grad():
+            for name, p in self.named_parameters():
+                if 'weight' in name:
+                    standard_init(p)
+
+            if self.do_normalize_factors:
+                self.normalize_factors()
+     
+    def normalize_factors(self):
+        self.generator.fc_factors.weight.data = F.normalize(self.generator.fc_factors.weight.data, dim=1)
+    
+    def change_parameter_grad_status(self, step, optimizer, scheduler, loading_checkpoint=False):
+        return optimizer, scheduler
+    
+    def kl_div(self):
+        kl = kldiv_gaussian_gaussian(post_mu  = self.g_posterior_mean,
+                                     post_lv  = self.g_posterior_logvar,
+                                     prior_mu = self.g_prior_mean,
+                                     prior_lv = self.g_prior_logvar)
+        if self.u_latent_size > 0:
+            kl += kldiv_gaussian_gaussian(post_mu  = self.u_posterior_mean,
+                                          post_lv  = self.u_posterior_logvar,
+                                          prior_mu = self.u_prior_mean,
+                                          prior_lv = self.u_prior_logvar)
+        return kl
+
 class LFADS_Multiblock_Net(nn.Module):
     '''
         Similar to the LFADS_Net, but implementing multiple encoder/generator pair RNN cells in parallel for multiband processing.
@@ -537,6 +891,47 @@ class LFADS_Ecog_SingleSession_Net(LFADS_Net):
         recon = {'rates' : self.fc_logrates(factors)}
         recon['data'] = recon['rates'].clone().permute(1, 0, 2)
         return recon, (factors, generators, gen_inputs)
+
+class LFADS_Ecog_CoRNN_Net(LFADS_coRNN_Net):
+
+    def __init__(self, input_size, factor_size = 4,
+                 g_encoder_size  = 64, c_encoder_size = 64,
+                 g_latent_size   = 64, u_latent_size  = 1,
+                 controller_size = 64, generator_size = 64,
+                 prior = {'g0' : {'mean' : {'value': 0.0, 'learnable' : True},
+                                  'var'  : {'value': 0.1, 'learnable' : False}},
+                          'u'  : {'mean' : {'value': 0.0, 'learnable' : False},
+                                  'var'  : {'value': 0.1, 'learnable' : True},
+                                  'tau'  : {'value': 10,  'learnable' : True}}},
+                 clip_val=5.0, dropout=0.0, max_norm = 200, deep_freeze = False,
+                 do_normalize_factors=True, factor_bias = False, device='cpu'):
+        
+        super(LFADS_Ecog_CoRNN_Net, self).__init__(
+            input_size=input_size, factor_size = factor_size, prior = prior,
+            g_encoder_size   = g_encoder_size, c_encoder_size = c_encoder_size,
+            g_latent_size    = g_latent_size, u_latent_size = u_latent_size,
+            controller_size  = controller_size, generator_size = generator_size,
+            clip_val=clip_val, dropout=dropout, max_norm = max_norm, deep_freeze = deep_freeze,
+            do_normalize_factors=do_normalize_factors, factor_bias = factor_bias, device=device
+        )
+    
+        self.initialize_weights()
+
+    def forward(self, input):
+        factors, gen_inputs = super(LFADS_Ecog_CoRNN_Net, self).forward(input.perumte(1, 0, 2))
+        recon = {
+            'rates':    factors,
+            'data':     factors.clone().permute(1,0,2)
+        }
+        return recon, (factors, gen_inputs)
+
+    def forward_all(self, input):
+        factors, generators, gen_inputs = super(LFADS_Ecog_CoRNN_Net, self).forward(input.perumte(1, 0, 2))
+        recon = {
+            'rates':    factors,
+            'data':     factors.clone().permute(1,0,2)
+        }
+        return recon, (factors, generators, gen_inputs)
     
 class LFADS_MultiSession_Net(LFADS_Net): # for aligning multiple subjects/recordings where things drift.
     
@@ -688,6 +1083,33 @@ class LFADS_GeneratorCell(nn.Module):
         
         return generator_state, factor_state
 
+from coRNN import coRNN
+class LFADS_CoRNN_GeneratorCell(nn.Module):
+
+    def __init__(self,input_size, generator_size, factor_size, dropout=0.0, clip_val=5.0, factor_bias=False):
+        super(LFADS_CoRNN_GeneratorCell, self).__init__()
+        self.input_size = input_size
+        self.generator_size = generator_size
+        self.factor_size = factor_size
+
+        self.dropout = dropout
+        self.clip_val = clip_val
+
+        self.cornn_generator = coRNN(
+            input_size = input_size,
+            hidden_size = generator_size,
+            output_size = factor_size,
+            n_layer = 1,
+            dt = 1, # how important is this? not routed through though (yet)
+        )
+        None
+
+    def forward(self,input,hidden):
+        generator_state = hidden
+        generator_state = self.cornn_generator(input,generator_state)
+        # the coRNN generator is inherently bound, so this shouldn't be necessary, but why not (remove if shown true)
+        factor_state, generator_state = generator_state.clamp(min=-self.clip_val,max=self.clip_val)
+        return generator_state, factor_state
 
 class LFADS_Generator_SourceAttnCell(nn.Module):
 

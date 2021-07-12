@@ -66,9 +66,16 @@ class RunManager():
                 recon, latent = self.model(src)
 #                 print('fw time: ', time.time()-fw_tic)
                 loss_tic = time.time()
-                loss, loss_dict = self.objective(x_orig= trg,
-                                                 x_recon= recon,
-                                                 model= self.model)
+                if self.model.__class__.__name__ == 'LFADS_Multiblock_Net' and self.objective.__class__.__name__ == 'Multiblock_LFADS_Loss_Allblocks':
+                    loss, loss_dict = self.objective(x_block = src,
+                                                     x_orig = trg,
+                                                     x_block_out = latent,
+                                                     x_recon = recon,
+                                                     model = self.model)
+                else:
+                    loss, loss_dict = self.objective(x_orig= trg,
+                                                    x_recon= recon,
+                                                    model= self.model)
 #                 print('loss time: ', time.time()-loss_tic)
                 loss_dict_list.append(loss_dict)
 
@@ -140,7 +147,10 @@ class RunManager():
                     fw_val_tic = time.time()
                     recon, latent = self.model(src)
 #                     print('fw val time: ',time.time()-fw_val_tic)
-                    loss, loss_dict = self.objective(x_orig= trg, x_recon= recon, model= self.model)
+                    if self.model.__class__.__name__ == 'LFADS_Multiblock_Net' and self.objective.__class__.__name__ == 'Multiblock_LFADS_Loss_Allblocks':
+                        loss, loss_dict = self.objective(x_block = src, x_orig = trg, x_block_out = latent, x_recon = recon, model = self.model)
+                    else:
+                        loss, loss_dict = self.objective(x_orig= trg, x_recon= recon, model= self.model)
                     loss_dict_list.append(loss_dict)
                     
             loss_dict = {} 
